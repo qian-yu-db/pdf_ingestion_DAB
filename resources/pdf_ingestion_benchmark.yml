@@ -5,8 +5,8 @@ resources:
       job_clusters:
         - job_cluster_key: de_project
           new_cluster:
-            spark_version: 15.4.x-cpu-scala2.12
-            node_type_id: rd-fleet.2xlarge
+            spark_version: 15.4.x-scala2.12
+            node_type_id: i3.2xlarge
             num_workers: 20
             aws_attributes:
               first_on_demand: 1
