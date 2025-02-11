@@ -7,6 +7,32 @@ include:
   - resources/pdf_ingestion_benchmark.yml
   - resources/pdf_ingestion_job.yml
 
+variables:
+  node_type_id:
+    description: "node type id"
+    default: i3.2xlarge
+  num_workers:
+    description: "number of workers"
+    default: 20
+  catalog:
+    description: "unity catalog name"
+    default: qyu_test
+  schema:
+    description: "schema name"
+    default: genai_pdf_workflow
+  volume:
+    description: "source file volume"
+    default: pdf_batch
+  checkpoints_volume:
+    description: "checkpoints volume"
+    default: checkpoints
+  reset_data:
+    description: "reset data boolean flag"
+    default: "true"
+  table_prefix:
+    description: "output table prefix"
+    default: my_project
+
 targets:
   # The 'dev' target, for development purposes. This target is the default.
   dev:
