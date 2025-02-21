@@ -50,12 +50,14 @@ import pandas as pd
 HOSTNAME = spark.conf.get('spark.databricks.workspaceUrl')
 TOKEN = dbutils.notebook.entry_point.getDbutils().notebook().getContext().apiToken().get()
 PARSED_IMG_DIR = f"/Volumes/{catalog}/{schema}/{volume}/parsed_images"
+SALTED_PANDAS_UDF_MODE = False
 
 w = WorkspaceClient(host=HOSTNAME, token=TOKEN)
 
 # COMMAND ----------
 
-from pyspark.sql.functions import pandas_udf, col
+import pyspark.sql.functions as F
+from pyspark.sql.types import ArrayType, StringType
 import pandas as pd
 import time
 from functools import wraps
@@ -90,7 +92,9 @@ def retry_on_failure(max_retries=3, delay=1):
         return wrapper
     return decorator
 
-@pandas_udf("string")
+
+
+@F.pandas_udf("string")
 def process_pdf_bytes(contents: pd.Series) -> pd.Series:
     """A Pandas UDF to perform PDF parsing and text extraction with Unstructured
     OSS API.
@@ -140,15 +144,79 @@ def process_pdf_bytes(contents: pd.Series) -> pd.Series:
         results = list(executor.map(perform_partition, contents))
     return pd.Series(results)
 
+
+@F.pandas_udf(ArrayType(StringType()))
+def process_pdf_bytes_as_array_type(contents: pd.Series) -> pd.Series:
+    from unstructured.partition.pdf import partition_pdf
+    import pandas as pd
+    import os
+    import io
+
+    def perform_partition(raw_doc_contents_bytes):
+        pdf = io.BytesIO(raw_doc_contents_bytes)
+        raw_elements = partition_pdf(
+            file=pdf,
+            infer_table_structure=True,
+            lenguages=["eng"],
+            strategy="hi_res",
+            extract_image_block_types=["Table", "Image"],
+            extract_image_block_output_dir=PARSED_IMG_DIR,
+        )
+
+        text_content = ""
+        for section in raw_elements:
+            # Tables are parsed seperatly, add a \n to give the chunker a hint to split well.
+            if section.category == "Table":
+                if section.metadata is not None:
+                    if section.metadata.text_as_html is not None:
+                        # convert table to markdown
+                        text_content += "\n" + md(section.metadata.text_as_html) + "\n"
+                    else:
+                        text_content += " " + section.text
+                else:
+                    text_content += " " + section.text
+            # Other content often has too-aggresive splitting, merge the content
+            else:
+                text_content += " " + section.text
+
+        return text_content
+
+    def perform_partition_list(list_contents):
+        results = []
+        worker_cpu_scale_factor = 2
+        max_tp_workers = os.cpu_count() * worker_cpu_scale_factor
+        with ThreadPoolExecutor(max_workers=min(8, max_tp_workers)) as executor:
+            results = list(executor.map(perform_partition, list_contents))
+        return results
+
+    final_results = []
+    for binary_content_list in contents:
+        final_results.append(perform_partition_list(binary_content_list))
+    return pd.Series(final_results)
 # COMMAND ----------
 
 from concurrent.futures import ThreadPoolExecutor
 
+
 def foreach_batch_function_silver(batch_df, batch_id):
-    batch_df.withColumn("text", process_pdf_bytes("content")) \
-            .drop("content")    \
-            .write.mode("append") \
+    if SALTED_PANDAS_UDF_MODE:
+        (
+            batch_df.withColumn("batch_rank", (F.floor(F.rand() * 40) + 1).cast("int"))
+            .groupby("batch_rank")
+            .agg(F.collect_list("content").alias("content"))
+            .withColumn("text", F.explode(process_pdf_bytes_as_array_type("content")))
+            .drop("content")
+            .drop("batch_rank")
+            .write.mode("append")
             .saveAsTable(job_config.get("parsed_file_table_name"))
+        )
+    else:
+        (
+            batch_df.withColumn("text", process_pdf_bytes("content"))
+            .drop("content")
+            .write.mode("append")
+            .saveAsTable(job_config.get("parsed_file_table_name"))
+        )
 
 # COMMAND ----------
 
