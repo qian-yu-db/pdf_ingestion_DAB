@@ -51,6 +51,17 @@ resources:
           webhook_notifications: {}
           max_retries: 2
           run_if: ALL_SUCCESS
+        - task_key: write_run_details
+          depends_on:
+            - task_key: Silver_pdf_content_parsing_extraction
+          notebook_task:
+            notebook_path: ../src/reporting.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              job_id: '{{job.id}}'
+            source: WORKSPACE
+          job_cluster_key: de_project
       queue:
         enabled: true
       webhook_notifications: {}
