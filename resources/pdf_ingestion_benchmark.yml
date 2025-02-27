@@ -11,7 +11,7 @@ resources:
             aws_attributes:
               first_on_demand: 1
               zone_id: us-west-2a
-              availability: SPOT_WITH_FALLBACK
+              availability: ON_DEMAND
               spot_bid_price_percent: 100
             runtime_engine: PHOTON
             data_security_mode: SINGLE_USER

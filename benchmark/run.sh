@@ -9,7 +9,7 @@ ls -l
 
 node_type_id=("i3.2xlarge" "m5d.2xlarge" "r5d.2xlarge")
 num_workers=(20 30 40)
-pdf_batches=(100 200 300 400 500)
+pdf_batches=(200)
 
 for num_workers in "${num_workers[@]}"; do
   for node_type_id in "${node_type_id[@]}"; do
