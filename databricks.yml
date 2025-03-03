@@ -16,13 +16,13 @@ variables:
     default: 20
   catalog:
     description: "unity catalog name"
-    default: qyu_test
+    default: my_catalog
   schema:
     description: "schema name"
-    default: genai_pdf_workflow
+    default: my_schema
   volume:
     description: "source file volume"
-    default: pdf_batch
+    default: my_volume
   checkpoints_volume:
     description: "checkpoints volume"
     default: checkpoints
@@ -50,7 +50,7 @@ targets:
   #
   # staging:
   #   workspace:
-  #     host: https://e2-demo-field-eng.cloud.databricks.com
+  #     host: ${workspace.host}
 
   # The 'prod' target, used for production deployment.
   prod:
@@ -59,8 +59,6 @@ targets:
     mode: production
     workspace:
       host: https://e2-demo-field-eng.cloud.databricks.com
-      # We always use /Users/q.yu@databricks.com for all resources to make sure we only have a single copy.
-      # If this path results in an error, please make sure you have a recent version of the CLI installed.
       root_path: /Users/q.yu@databricks.com/.bundle/${bundle.name}/${bundle.target}
     run_as:
       # This runs as q.yu@databricks.com in production. We could also use a service principal here,
