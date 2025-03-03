@@ -1,0 +1,53 @@
+# The main job for {{.project_name}}
+resources:
+jobs:
+  {{.project_name}}_job:
+    name: {{.project_name}}_job
+    tasks:
+      - task_key: Bronze_pdf_file_ingestion
+        job_cluster_key: pdf_ingestion_job_cluster
+        max_retries: 2
+        webhook_notifications: {}
+        run_if: ALL_SUCCESS
+        email_notifications: {}
+        notebook_task:
+          notebook_path: ../src/Bronze-pdf_batch_ingestion_binary_foreachbatch.py
+          source: WORKSPACE
+          base_parameters:
+            catalog: ${var.catalog}
+            schema: ${var.schema}
+            volume: ${var.volume}
+            reset_data: ${var.reset_data}
+            checkpoints_volume: ${var.checkpoints_volume}
+            table_prefix: ${var.table_prefix}
+      - task_key: Silver_pdf_content_parsing_extraction
+        depends_on:
+          - task_key: Bronze_pdf_file_ingestion
+        job_cluster_key: de_project
+        email_notifications: {}
+        min_retry_interval_millis: 300000
+        notebook_task:
+          notebook_path: ../src/Silver-pdf_batch_ingestion_binary_foreachbatch.py
+          source: WORKSPACE
+          base_parameters:
+            catalog: ${var.catalog}
+            schema: ${var.schema}
+            volume: ${var.volume}
+            reset_data: ${var.reset_data}
+            checkpoints_volume: ${var.checkpoints_volume}
+            table_prefix: ${var.table_prefix}
+        webhook_notifications: {}
+        max_retries: 2
+        run_if: ALL_SUCCESS
+    job_clusters:
+      - job_cluster_key: pdf_ingestion_job_cluster
+        new_cluster:
+          node_type_id: ${var.node_type_id}
+          spark_version: 16.1.x-scala2.12
+          num_workers: ${var.num_workers}
+          aws_attributes:
+            first_on_demand: 1
+            zone_id: us-west-2a
+            availability: ON_DEMAND
+            runtime_engine: PHOTON
+            data_security_mode: SINGLE_USER
