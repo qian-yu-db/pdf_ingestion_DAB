@@ -19,6 +19,11 @@ high-performant, scalable and fault-tolerant.
     ```
     databricks bundle init pdf_ingestion_tempate
     ```
+* Follow the prompts to define your project name
+* The databricks asset bundle job configurations will be auto created
+* Review the main asset configuration `databricks.yml` for further customization for your workspace
+  * Update `Variables` section with your workspace environment details
+* Refer to [Databricks Asset Bundle Documentation](https://docs.databricks.com/dev-tools/bundles/index.html)
 
 4. To deploy a development copy of this project, type:
     ```
