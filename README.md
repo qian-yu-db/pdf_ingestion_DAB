@@ -1,10 +1,18 @@
 # pdf_ingestion
 
+## Architecture
+
 ![Architecture](imgs/pdf_ingestion_arch.png)
 
 This project allows databricks users to ingest large number of complex pdf files from a 
 Databricks Unity Catalog volume into a Databricks Delta table. The project is designed to be 
 high-performant, scalable and fault-tolerant.
+
+## Spark Optimizations
+
+* multi-threaded OCR based pdf parsing
+* Automatic skewed tasks management
+* Fault tolerance
 
 ## Getting started
 
@@ -61,6 +69,8 @@ high-performant, scalable and fault-tolerant.
 
 ## Performance Benchmarks
 
+The following benchmark is performed using [Unstructred open source API](https://github.com/Unstructured-IO/unstructured)
+
 m5d.2xlarge i.e. A balanced cluster offer the best performance overall
 
 ![Performance cross clusters](imgs/comp_nodes.png)
@@ -71,5 +81,7 @@ Performance comparison between different instance types
 
 Performance comparison between worker sizes
 
+## Roadmap
 
-
+* Add support for new models and APIs swapping
+* Statistics-based spark job optimization
