@@ -17,7 +17,7 @@ from unstructured.partition.pdf import partition_pdf
 
 # COMMAND ----------
 file_path = dbutils.widgets.get("file_path")  # e.g. "/Volumes/a/b/sample.pdf"
-target_silver_table = dbutils.widgets.get("target_silver_table")  # e.g. "/Volumes/a/b/sample.pdf"
+silver_target_table = dbutils.widgets.get("silver_target_table")  # e.g. "/Volumes/a/b/sample.pdf"
 parsed_img_dir = dbutils.widgets.get("parsed_img_dir")  # e.g. "/Volumes/a/b/sample.pdf"
 # COMMAND ----------
 
@@ -112,5 +112,5 @@ processed_file_data = [
 
 silver_df = spark.createDataFrame(processed_file_data, schema=silver_table_schema)
 
-silver_df.write.mode("append").saveAsTable(target_silver_table)
+silver_df.write.mode("append").saveAsTable(silver_target_table)
 # COMMAND ----------
