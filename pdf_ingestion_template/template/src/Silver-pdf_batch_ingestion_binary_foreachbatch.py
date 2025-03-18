@@ -275,7 +275,6 @@ def submit_offline_job(file_path, silver_target_table):
 
 def foreach_batch_function_silver(batch_df, batch_id):
     # 1) Split data into small vs. large based on "length" column
-
     df_small = batch_df.filter(F.col("length") <= LARGE_FILE_THRESHOLD)
     df_large = batch_df.filter(F.col("length") > LARGE_FILE_THRESHOLD)
 
@@ -287,7 +286,7 @@ def foreach_batch_function_silver(batch_df, batch_id):
     worker_cpu_scale_factor = 2
     max_tp_workers = os.cpu_count() * worker_cpu_scale_factor
     with ThreadPoolExecutor(max_workers=min(8, max_tp_workers)) as executor:
-        _ = [executor.submit(submit_offline_job, row) for row in df_large.select("path", "length").collect()]
+        _ = [executor.submit(submit_offline_job, row) for row in df_large.select("path").collect()]
 
 
     # 3) Process "small" files
