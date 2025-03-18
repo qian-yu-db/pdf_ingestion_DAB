@@ -77,6 +77,7 @@ if reset_data:
 from unstructured.partition.pdf import partition_pdf
 from databricks.sdk import WorkspaceClient
 import pandas as pd
+import os
 
 HOSTNAME = spark.conf.get('spark.databricks.workspaceUrl')
 TOKEN = dbutils.notebook.entry_point.getDbutils().notebook().getContext().apiToken().get()
@@ -142,7 +143,6 @@ def process_pdf_bytes(contents: pd.Series) -> pd.Series:
     import re
     import io
     from markdownify import markdownify as md
-    import os
 
     @retry_on_failure(max_retries=5, delay=2)
     def perform_partition(raw_doc_contents_bytes):
@@ -184,7 +184,6 @@ def process_pdf_bytes(contents: pd.Series) -> pd.Series:
 def process_pdf_bytes_as_array_type(contents: pd.Series) -> pd.Series:
     from unstructured.partition.pdf import partition_pdf
     import pandas as pd
-    import os
     import io
 
     def perform_partition(raw_doc_contents_bytes):
@@ -275,16 +274,23 @@ def submit_offline_job(file_path, file_size, silver_target_table):
 
 def foreach_batch_function_silver(batch_df, batch_id):
     # 1) Split data into small vs. large based on "length" column
+
     df_small = batch_df.filter(F.col("length") <= LARGE_FILE_THRESHOLD)
     df_large = batch_df.filter(F.col("length") > LARGE_FILE_THRESHOLD)
 
-    # 2) For each large PDF, call run_now on the offline workflow
-    large_rows = df_large.select("path", "length").collect()
-    for row in large_rows:
+    # 2) For each "large" PDF, call run_now on the offline workflow
+    def submit_offline_job(row):
         file_path = row["path"].replace("dbfs:/", "")
         file_size = row["length"]
         submit_offline_job(file_path, file_size, job_config.get("parsed_file_table_name"))
 
+    worker_cpu_scale_factor = 2
+    max_tp_workers = os.cpu_count() * worker_cpu_scale_factor
+    with ThreadPoolExecutor(max_workers=min(8, max_tp_workers)) as executor:
+        _ = [executor.submit(submit_offline_job, row) for row in df_large.select("path", "length").collect()]
+
+
+    # 3) Process "small" files
     if SALTED_PANDAS_UDF_MODE:
         (
             df_small.withColumn("batch_rank", (F.floor(F.rand() * 40) + 1).cast("int"))
