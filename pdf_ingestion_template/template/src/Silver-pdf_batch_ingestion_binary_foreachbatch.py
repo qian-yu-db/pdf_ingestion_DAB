@@ -84,6 +84,7 @@ PARSED_IMG_DIR = f"/Volumes/{catalog}/{schema}/{volume}/parsed_images"
 SALTED_PANDAS_UDF_MODE = False
 # Example threshold in bytes: 1 GB
 LARGE_FILE_THRESHOLD = 1 * 1024 * 1024 * 1024
+LARGE_FILE_PROCESSING_WORKFLOW_NAME = "{{.project_name}}_async_large_file_job"
 
 w = WorkspaceClient(host=HOSTNAME, token=TOKEN)
 
@@ -230,6 +231,21 @@ def process_pdf_bytes_as_array_type(contents: pd.Series) -> pd.Series:
 
 # COMMAND ----------
 
+def get_job_id_by_name(workflow_name: str) -> int:
+    """
+    Looks up the job_id for a Databricks job (workflow) by its name.
+    Raises ValueError if no match is found.
+    """
+    jobs_list = w.jobs.list(expand_tasks=False, limit=100)  # returns an object with a `.jobs` attribute
+
+    # Each element in jobs_list.jobs is a "Job" descriptor that includes:
+    # job_id, created_time, settings, etc.
+    for job_desc in jobs_list:
+        # job_desc.settings is a "JobSettings" object with a `.name` attribute
+        if job_desc.settings.name == workflow_name:
+            return job_desc.job_id
+
+    raise ValueError(f"No job found with the name: {workflow_name}")
 
 def submit_offline_job(file_path, file_size, silver_target_table):
     """
@@ -240,18 +256,20 @@ def submit_offline_job(file_path, file_size, silver_target_table):
         dbutils.widgets.text("silver_target_table", "")
     """
     try:
+        job_id = get_job_id_by_name(LARGE_FILE_PROCESSING_WORKFLOW_NAME)
+
         run_response = w.jobs.run_now(
-            job_id=OFFLINE_JOB_ID,
+            job_id=job_id,
             notebook_params={
                 "file_path": file_path,
                 "silver_target_table": silver_target_table,
             }
         )
         run_id = run_response.run_id
-        print(f"run_now invoked for job_id={OFFLINE_JOB_ID}, run_id={run_id}, file_path={file_path}")
+        print(f"run_now invoked for job_id={job_id}, run_id={run_id}, file_path={file_path}")
         return run_id
     except Exception as e:
-        print(f"Failed to run_now for job_id={OFFLINE_JOB_ID}: {e}")
+        print(f"Failed to run_now for job_id={job_id}: {e}")
         raise
 
 
