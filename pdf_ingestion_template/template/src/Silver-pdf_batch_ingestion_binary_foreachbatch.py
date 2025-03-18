@@ -278,15 +278,22 @@ def foreach_batch_function_silver(batch_df, batch_id):
     df_small = batch_df.filter(F.col("length") <= LARGE_FILE_THRESHOLD)
     df_large = batch_df.filter(F.col("length") > LARGE_FILE_THRESHOLD)
 
+    # Process "large files"
     # 2) For each "large" PDF, call run_now on the offline workflow
-    def submit_offline_job(row):
-        file_path = row["path"].replace("dbfs:/", "")
+    def submit_offline_job(file_path):
         submit_offline_job(file_path, job_config.get("parsed_file_table_name"))
 
     worker_cpu_scale_factor = 2
     max_tp_workers = os.cpu_count() * worker_cpu_scale_factor
     with ThreadPoolExecutor(max_workers=min(8, max_tp_workers)) as executor:
-        _ = [executor.submit(submit_offline_job, row) for row in df_large.select("path").collect()]
+        future_map = {executor.submit(submit_offline_job, row["path"].replace("dbfs:/", "")): row for row in df_large.select("path").collect()}
+
+    for future, file_path in future_map.items():
+        try:
+            run_id = future.result()
+            print(f"Successfully submitted offline job for {file_path} -> run_id={run_id}")
+        except Exception as e:
+            print(f"Failed to submit offline job for {file_path}: {e}")
 
 
     # 3) Process "small" files
