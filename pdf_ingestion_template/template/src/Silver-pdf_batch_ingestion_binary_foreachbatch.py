@@ -246,7 +246,7 @@ def get_job_id_by_name(workflow_name: str) -> int:
 
     raise ValueError(f"No job found with the name: {workflow_name}")
 
-def submit_offline_job(file_path, file_size, silver_target_table):
+def submit_offline_job(file_path, silver_target_table):
     """
     Calls 'run_now' on an already-deployed Workflow (job)
     passing the file_path & file_size as notebook parameters.
@@ -262,6 +262,7 @@ def submit_offline_job(file_path, file_size, silver_target_table):
             notebook_params={
                 "file_path": file_path,
                 "silver_target_table": silver_target_table,
+                "parsed_img_dir": PARSED_IMG_DIR,
             }
         )
         run_id = run_response.run_id
@@ -281,8 +282,7 @@ def foreach_batch_function_silver(batch_df, batch_id):
     # 2) For each "large" PDF, call run_now on the offline workflow
     def submit_offline_job(row):
         file_path = row["path"].replace("dbfs:/", "")
-        file_size = row["length"]
-        submit_offline_job(file_path, file_size, job_config.get("parsed_file_table_name"))
+        submit_offline_job(file_path, job_config.get("parsed_file_table_name"))
 
     worker_cpu_scale_factor = 2
     max_tp_workers = os.cpu_count() * worker_cpu_scale_factor

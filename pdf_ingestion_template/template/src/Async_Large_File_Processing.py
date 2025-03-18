@@ -18,6 +18,7 @@ from unstructured.partition.pdf import partition_pdf
 # COMMAND ----------
 file_path = dbutils.widgets.get("file_path")  # e.g. "/Volumes/a/b/sample.pdf"
 target_silver_table = dbutils.widgets.get("target_silver_table")  # e.g. "/Volumes/a/b/sample.pdf"
+parsed_img_dir = dbutils.widgets.get("parsed_img_dir")  # e.g. "/Volumes/a/b/sample.pdf"
 # COMMAND ----------
 
 
@@ -51,7 +52,7 @@ def process_single_pdf(pdf_bytes) -> str:
         lenguages=["eng"],
         strategy="hi_res",
         extract_image_block_types=["Table", "Image"],
-        extract_image_block_output_dir="/dbfs/tmp/parsed_images",  # or your chosen location
+        extract_image_block_output_dir=parsed_img_dir,  # or your chosen location
     )
 
     # Build the final text string
