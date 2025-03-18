@@ -3,16 +3,19 @@
 bundle:
   name: {{.project_name}}
 
- include:
-    - resources/*.yml
+include:
+  - resources/*.yml
 
 variables:
   node_type_id:
     description: "node type id"
-    default: i3.2xlarge
+    default: m5d.2xlarge
   num_workers:
     description: "number of workers"
     default: 40
+  zone_id:
+    description: "AWS zone_id attribute"
+    default: us-west-2a
   catalog:
     description: "unity catalog name"
     default: my_catalog
@@ -26,7 +29,7 @@ variables:
     description: "checkpoints volume"
     default: checkpoints
   reset_data:
-    description: "reset data boolean flag"
+    description: "reset all data tables boolean flag"
     default: "true"
   table_prefix:
     description: "output table prefix"
