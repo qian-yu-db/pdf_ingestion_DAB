@@ -8,6 +8,14 @@
             "order": 1,
             "pattern": "^[A-Za-z0-9_]+$",
             "pattern_match_failure_message": "Name must consist of letters, numbers, and underscores."
+        },
+        "async_large_file_threshold_in_mb": {
+            "type": "integer",
+            "default": 1000,
+            "description": "Threshold (in MB) above which files are processed asynchronously via Databricks Workflow runs. Files smaller than this threshold are processed inline in the streaming pipeline.",
+            "order": 2,
+            "minimum": 1,
+            "pattern_match_failure_message": "Threshold must be a positive integer."
         }
     },
     "success_message": "Workspace to use (auto-detected, edit in '{{.project_name}}/databricks.yml'): {{workspace_host}}\n\n✨ Your new project has been created!\n\nPlease refer to the README.md file for \"getting started\" instructions.\nSee also the documentation at https://docs.databricks.com/dev-tools/bundles/index.html."

@@ -83,8 +83,7 @@ HOSTNAME = spark.conf.get('spark.databricks.workspaceUrl')
 TOKEN = dbutils.notebook.entry_point.getDbutils().notebook().getContext().apiToken().get()
 PARSED_IMG_DIR = f"/Volumes/{catalog}/{schema}/{volume}/parsed_images"
 SALTED_PANDAS_UDF_MODE = False
-# Example threshold in bytes: 1 GB
-LARGE_FILE_THRESHOLD = 1 * 1024 * 1024 * 1024
+LARGE_FILE_THRESHOLD = int({{.async_large_file_threshold_in_mb}}) * 1024 * 1024  # MB to bytes
 LARGE_FILE_PROCESSING_WORKFLOW_NAME = "{{.project_name}}_async_large_file_job"
 
 w = WorkspaceClient(host=HOSTNAME, token=TOKEN)
