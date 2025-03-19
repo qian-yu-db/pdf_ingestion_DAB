@@ -1,4 +1,26 @@
+# Databricks notebook source
+# MAGIC %md
+# MAGIC # Async processing of large PDF files
+
 # COMMAND ----------
+
+# MAGIC %pip install -U -qqq markdownify==0.12.1 "unstructured[local-inference, all-docs]==0.14.4" unstructured-client==0.22.0 nltk==3.8.1
+# MAGIC %pip install databricks-sdk -U -q
+
+# COMMAND ----------
+
+# MAGIC %run ./helpers
+
+# COMMAND ----------
+
+install_apt_get_packages(["poppler-utils", "tesseract-ocr"])
+
+# COMMAND ----------
+
+dbutils.library.restartPython()
+
+# COMMAND ----------
+
 import io
 import os
 from datetime import datetime
@@ -15,14 +37,12 @@ from unstructured.partition.pdf import partition_pdf
 
 # COMMAND ----------
 
-# COMMAND ----------
 file_path = dbutils.widgets.get("file_path")  # e.g. "/Volumes/a/b/sample.pdf"
 silver_target_table = dbutils.widgets.get("silver_target_table")  # e.g. "/Volumes/a/b/sample.pdf"
 parsed_img_dir = dbutils.widgets.get("parsed_img_dir")  # e.g. "/Volumes/a/b/sample.pdf"
-# COMMAND ----------
-
 
 # COMMAND ----------
+
 def process_single_pdf(pdf_bytes) -> str:
     """
     Parses the given PDF byte content using unstructured's `partition_pdf` and
@@ -73,8 +93,6 @@ def process_single_pdf(pdf_bytes) -> str:
 
 # COMMAND ----------
 
-
-# COMMAND ----------
 # Read the single PDF file as binary
 with open(file_path, "rb") as f:
     raw_doc_contents_bytes = f.read()
@@ -113,4 +131,3 @@ processed_file_data = [
 silver_df = spark.createDataFrame(processed_file_data, schema=silver_table_schema)
 
 silver_df.write.mode("append").saveAsTable(silver_target_table)
-# COMMAND ----------
