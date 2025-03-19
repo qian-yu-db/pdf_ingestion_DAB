@@ -21,8 +21,6 @@ resources:
               checkpoints_volume: ${var.checkpoints_volume}
               table_prefix: ${var.table_prefix}
         - task_key: Silver_pdf_content_parsing_extraction
-          depends_on:
-            - task_key: Bronze_pdf_file_ingestion
           job_cluster_key: pdf_ingestion_job_cluster
           email_notifications: {}
           min_retry_interval_millis: 300000
