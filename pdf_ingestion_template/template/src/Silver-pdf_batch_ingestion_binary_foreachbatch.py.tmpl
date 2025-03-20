@@ -240,7 +240,7 @@ def get_job_id_by_name(workflow_name: str) -> int:
     # job_id, created_time, settings, etc.
     for job_desc in jobs_list:
         # job_desc.settings is a "JobSettings" object with a `.name` attribute
-        if job_desc.settings.name == workflow_name:
+        if workflow_name in job_desc.settings.name:
             return job_desc.job_id
 
     raise ValueError(f"No job found with the name: {workflow_name}")
