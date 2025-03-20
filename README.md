@@ -71,17 +71,11 @@ high-performant, scalable and fault-tolerant.
 
 The following benchmark is performed using [Unstructred open source API](https://github.com/Unstructured-IO/unstructured)
 
-m5d.2xlarge i.e. A balanced cluster offer the best performance overall
+Performance comparison across different instance types
 
-![Performance cross clusters](imgs/comp_nodes.png)
-
-Performance comparison between different instance types
-
-![Performance cross workers](imgs/comp_workers.png)
-
-Performance comparison between worker sizes
+Performance comparison across worker sizes
 
 ## Roadmap
 
-* Add support for new models and APIs swapping
-* Statistics-based spark job optimization
+* Suppot databricks document parsing API
+* Statistic-based spark job optimization
