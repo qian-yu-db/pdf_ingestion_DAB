@@ -252,6 +252,7 @@ def submit_offline_job(file_path, silver_target_table):
     That notebook must define corresponding widgets:
         dbutils.widgets.text("file_path", "")
         dbutils.widgets.text("silver_target_table", "")
+        dbutils.widgets.text("parsed_img_dir", "")
     """
     try:
         job_id = get_job_id_by_name(LARGE_FILE_PROCESSING_WORKFLOW_NAME)
@@ -279,13 +280,13 @@ def foreach_batch_function_silver(batch_df, batch_id):
 
     # Process "large files"
     # 2) For each "large" PDF, call run_now on the offline workflow
-    def submit_offline_job(file_path):
+    def _async_submit_offline_job(file_path):
         submit_offline_job(file_path, job_config.get("parsed_file_table_name"))
 
     worker_cpu_scale_factor = 2
     max_tp_workers = os.cpu_count() * worker_cpu_scale_factor
     with ThreadPoolExecutor(max_workers=min(8, max_tp_workers)) as executor:
-        future_map = {executor.submit(submit_offline_job, row["path"].replace("dbfs:/", "")): row for row in df_large.select("path").collect()}
+        future_map = {executor.submit(_async_submit_offline_job, row["path"].replace("dbfs:/", "")): row for row in df_large.select("path").collect()}
 
     for future, file_path in future_map.items():
         try:
