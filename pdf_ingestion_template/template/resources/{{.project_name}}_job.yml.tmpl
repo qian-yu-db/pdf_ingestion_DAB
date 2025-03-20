@@ -43,10 +43,16 @@ resources:
             node_type_id: ${var.node_type_id}
             spark_version: 16.1.x-scala2.12
             num_workers: ${var.num_workers}
+            {{ if eq .cloud_provider "aws" }}
             aws_attributes:
               first_on_demand: 1
               zone_id: ${var.zone_id}
               availability: ON_DEMAND
+            {{ else if eq .cloud_provider "azure" }}
+            azure_attributes:
+              first_on_demand: 1
+              availability: ON_DEMAND
+            {{ end }}
             runtime_engine: PHOTON
             data_security_mode: SINGLE_USER
       webhook_notifications: {}
@@ -71,10 +77,16 @@ resources:
                 node_type_id: ${var.node_type_id}
                 spark_version: 16.1.x-scala2.12
                 num_workers: 1
+                {{ if eq .cloud_provider "aws" }}
                 aws_attributes:
                   first_on_demand: 1
                   zone_id: ${var.zone_id}
                   availability: ON_DEMAND
+                {{ else if eq .cloud_provider "azure" }}
+                azure_attributes:
+                  first_on_demand: 1
+                  availability: ON_DEMAND
+                {{ end }}
                 runtime_engine: PHOTON
                 data_security_mode: SINGLE_USER
           webhook_notifications: {}
