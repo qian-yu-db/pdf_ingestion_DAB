@@ -9,11 +9,20 @@
             "pattern": "^[A-Za-z0-9_]+$",
             "pattern_match_failure_message": "Name must consist of letters, numbers, and underscores."
         },
+        "cloud_provider": {
+            "type": "string",
+            "description": "Cloud provider",
+            "default": "aws",
+            "order": 2,
+            "enum": ["aws", "azure"],
+            "pattern": "^(aws|azure)$",
+            "pattern_match_failure_message": "Cloud provider must be either 'aws' or 'azure'."
+        },
         "async_large_file_threshold_in_mb": {
             "type": "integer",
             "default": 1000,
-            "description": "Threshold (in MB) above which files are processed asynchronously via Databricks Workflow runs. Files smaller than this threshold are processed inline in the streaming pipeline.",
-            "order": 2,
+            "description": "Threshold (in MB) above which files are processed asynchronously via Databricks Workflow runs. Files smaller than this threshold are processed inline in the streaming pipeline. The default value is",
+            "order": 3,
             "minimum": 1,
             "pattern_match_failure_message": "Threshold must be a positive integer."
         }
