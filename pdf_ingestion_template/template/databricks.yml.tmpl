@@ -9,7 +9,7 @@ include:
 variables:
   cloud_provider:
     description: "Cloud provider"
-    default: aws
+    default: {{.cloud_provider}}
   node_type_id:
     description: "node type id"
     default: m5d.2xlarge
