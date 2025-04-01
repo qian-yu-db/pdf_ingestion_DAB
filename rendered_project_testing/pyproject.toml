@@ -1,0 +1,31 @@
+[tool.poetry]
+name = "pdf_ingestion"
+version = "0.0.1"
+description = "A Python package for scalable PDF processing on Databricks, featuring text and table extraction."
+authors = ["Qian Yu q.yu@databricks.com", "Jas Bali jas.bali@databricks.com"]
+packages = [
+  { include = "pdf_ingestion", from = "src" }
+]
+
+[tool.poetry.dependencies]
+python = ">=3.12,<3.13"
+
+markdownify = "0.12.1"
+nltk = "3.8.1"
+unstructured = { version = "0.14.4", extras = ["local-inference", "all-docs"] }
+unstructured-client = "0.22.0"
+databricks-sdk = "^0.1.0"
+
+[tool.poetry.group.test.dependencies]
+pytest = "^8.3"
+pyspark = "3.5.2"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+bronze_entrypoint = "pdf_ingestion.bronze_streaming_task:main"
+silver_entrypoint = "pdf_ingestion.silver_streaming_task:main"
+large_file_async_entrypoint = "pdf_ingestion.large_file_async_task:main"
+reporting_entrypoint = "pdf_ingestion.reporting_task:main"

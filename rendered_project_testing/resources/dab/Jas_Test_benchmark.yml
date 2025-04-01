@@ -1,0 +1,104 @@
+# The main job for Jas_Test
+resources:
+  jobs:
+    Jas_Test_benchmark:
+      name: Jas_Test_benchmark
+      tasks:
+        - task_key: Bronze_pdf_file_ingestion
+          job_cluster_key: pdf_ingestion_job_cluster
+          max_retries: 2
+          webhook_notifications: {}
+          run_if: ALL_SUCCESS
+          email_notifications: {}
+          python_wheel_task:
+            package_name: pdf_ingestion
+            entry_point: bronze_entrypoint
+            named_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              volume: ${var.volume}
+              reset_data: ${var.reset_data}
+              checkpoints_volume: ${var.checkpoints_volume}
+              table_prefix: ${var.table_prefix}
+          libraries:
+            - whl: ../../dist/*.whl
+        - task_key: Silver_pdf_content_parsing_extraction
+          job_cluster_key: pdf_ingestion_job_cluster
+          email_notifications: {}
+          min_retry_interval_millis: 300000
+          python_wheel_task:
+            package_name: pdf_ingestion
+            entry_point: silver_entrypoint
+            named_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              volume: ${var.volume}
+              reset_data: ${var.reset_data}
+              checkpoints_volume: ${var.checkpoints_volume}
+              table_prefix: ${var.table_prefix}
+          libraries:
+            - whl: ../../dist/*.whl
+          webhook_notifications: {}
+          max_retries: 2
+          run_if: ALL_SUCCESS
+        - task_key: write_run_details
+          depends_on:
+            - task_key: Silver_pdf_content_parsing_extraction
+          python_wheel_task:
+            package_name: pdf_ingestion
+            entry_point: silver_entrypoint
+            named_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              job_id: '{{job.id}}'
+          libraries:
+            - whl: ../../dist/*.whl
+          job_cluster_key: pdf_ingestion_job_cluster
+      job_clusters:
+        - job_cluster_key: pdf_ingestion_job_cluster
+          new_cluster:
+            node_type_id: ${var.node_type_id}
+            spark_version: 16.1.x-scala2.12
+            num_workers: ${var.num_workers}
+            init_scripts:
+              - workspace:
+                  destination: ${workspace.root_path}/files/resources/databricks/tesseract_install_init_script.sh
+            aws_attributes:
+              first_on_demand: 1
+              zone_id: ${var.zone_id}
+              availability: ON_DEMAND
+            runtime_engine: PHOTON
+            data_security_mode: SINGLE_USER
+
+    Jas_Test_async_large_file_job_benchmark:
+          name: Jas_Test_async_large_file_job
+          tasks:
+            - task_key: Async_Large_File_Task
+              job_cluster_key: large_file_job_cluster
+              max_retries: 3
+              webhook_notifications: {}
+              run_if: ALL_SUCCESS
+              email_notifications: {}
+              python_wheel_task:
+                package_name: pdf_ingestion
+                entry_point: large_file_async_entrypoint
+              libraries:
+                - whl: ../../dist/*.whl
+          job_clusters:
+            - job_cluster_key: large_file_job_cluster
+              new_cluster:
+                node_type_id: ${var.node_type_id}
+                spark_version: 16.1.x-scala2.12
+                num_workers: 1
+                init_scripts:
+                  - workspace:
+                      destination: ${workspace.root_path}/files/resources/databricks/tesseract_install_init_script.sh
+                aws_attributes:
+                  first_on_demand: 1
+                  zone_id: ${var.zone_id}
+                  availability: ON_DEMAND
+                runtime_engine: PHOTON
+                data_security_mode: SINGLE_USER
+          webhook_notifications: {}
+          max_concurrent_runs: 1
+          email_notifications: {}
