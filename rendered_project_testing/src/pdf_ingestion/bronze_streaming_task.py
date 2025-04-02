@@ -86,7 +86,7 @@ def run_bronze_task(
         print(f"Delete checkpoints volume folder for {raw_files_table_name} ...")
         # We can remove a path using Spark APIs or dbutils:
         checkpoint_remove_path = f"/Volumes/{catalog}/{schema_name}/{checkpoints_volume}/{raw_files_table_name.split('.')[-1]}"
-        get_dbutils.fs.rm("/Volumes/main/default/my-volume/my-data/", True)
+        get_dbutils.fs.rm(checkpoint_remove_path, True)
 
         print(f"Drop table {raw_files_table_name}...")
         spark.sql(f"DROP TABLE IF EXISTS {raw_files_table_name}")
