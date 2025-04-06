@@ -8,3 +8,4 @@ scratch/**
 !scratch/README.md
 .idea/
 .vscode/
+.env

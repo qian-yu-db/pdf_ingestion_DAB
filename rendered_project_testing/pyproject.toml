@@ -17,7 +17,9 @@ unstructured-client = "0.22.0"
 databricks-sdk = "^0.1.0"
 
 [tool.poetry.group.test.dependencies]
+python-dotenv = "^1.0"
 pytest = "^8.3"
+coverage = "^7.3"
 pyspark = "3.5.2"
 
 [build-system]

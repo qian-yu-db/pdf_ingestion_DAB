@@ -1,103 +1,238 @@
-import argparse
-import sys
 import json
+import os
+from concurrent.futures import ThreadPoolExecutor
 
-from pdf_ingestion.helper_utils import get_dbutils
-from pdf_ingestion.pdf_processing import foreach_batch_function_silver
-from pyspark.sql import SparkSession
+import pandas as pd
+import pyspark.sql.functions as F
+from pyspark.sql.types import ArrayType, StringType
+
+from .helper_utils import *
+
+SALTED_PANDAS_UDF_MODE = False
+LARGE_FILE_THRESHOLD = int(2000) * 1024 * 1024  # MB to bytes
+LARGE_FILE_PROCESSING_WORKFLOW_NAME = "Jas_Test_async_large_file_job"
 
 
-def parse_args():
+@F.pandas_udf("string")
+def process_pdf_bytes(contents: pd.Series) -> pd.Series:
+    """A Pandas UDF to perform PDF parsing and text extraction with Unstructured
+    OSS API.
+
+    - Multi-theading is enabled to improve performance.
     """
-    Parse command-line arguments (similar to dbutils.widgets).
-    Returns an argparse.Namespace with all parameters.
+    from unstructured.partition.pdf import partition_pdf
+    import pandas as pd
+    import io
+    from markdownify import markdownify as md
+
+    @retry_on_failure(max_retries=5, delay=2)
+    def perform_partition(raw_doc_contents_bytes):
+        pdf = io.BytesIO(raw_doc_contents_bytes)
+        raw_elements = partition_pdf(
+            file=pdf,
+            infer_table_structure=True,
+            lenguages=["eng"],
+            strategy="hi_res",
+            extract_image_block_types=["Table", "Image"],
+            extract_image_block_output_dir=PARSED_IMG_DIR,
+        )
+
+        text_content = ""
+        for section in raw_elements:
+            # Tables are parsed separately, add a \n to give the chunker a hint to split well.
+            if section.category == "Table":
+                if section.metadata is not None:
+                    if section.metadata.text_as_html is not None:
+                        # convert table to markdown
+                        text_content += "\n" + md(section.metadata.text_as_html) + "\n"
+                    else:
+                        text_content += " " + section.text
+                else:
+                    text_content += " " + section.text
+            # Other content often has too-aggresive splitting, merge the content
+            else:
+                text_content += " " + section.text
+
+        return text_content
+
+    worker_cpu_scale_factor = 2
+    max_tp_workers = os.cpu_count() * worker_cpu_scale_factor
+    with ThreadPoolExecutor(max_workers=min(8, max_tp_workers)) as executor:
+        results = list(executor.map(perform_partition, contents))
+    return pd.Series(results)
+
+
+@F.pandas_udf(ArrayType(StringType()))
+def process_pdf_bytes_as_array_type(contents: pd.Series) -> pd.Series:
+    from unstructured.partition.pdf import partition_pdf
+    import pandas as pd
+    import io
+    from markdownify import markdownify as md
+
+    def perform_partition(raw_doc_contents_bytes):
+        pdf = io.BytesIO(raw_doc_contents_bytes)
+        raw_elements = partition_pdf(
+            file=pdf,
+            infer_table_structure=True,
+            lenguages=["eng"],
+            strategy="hi_res",
+            extract_image_block_types=["Table", "Image"],
+            extract_image_block_output_dir=PARSED_IMG_DIR,
+        )
+
+        text_content = ""
+        for section in raw_elements:
+            # Tables are parsed seperatly, add a \n to give the chunker a hint to split well.
+            if section.category == "Table":
+                if section.metadata is not None:
+                    if section.metadata.text_as_html is not None:
+                        # convert table to markdown
+                        text_content += "\n" + md(section.metadata.text_as_html) + "\n"
+                    else:
+                        text_content += " " + section.text
+                else:
+                    text_content += " " + section.text
+            # Other content often has too-aggresive splitting, merge the content
+            else:
+                text_content += " " + section.text
+
+        return text_content
+
+    def perform_partition_list(list_contents):
+        results = []
+        worker_cpu_scale_factor = 2
+        max_tp_workers = os.cpu_count() * worker_cpu_scale_factor
+        with ThreadPoolExecutor(max_workers=min(8, max_tp_workers)) as executor:
+            results = list(executor.map(perform_partition, list_contents))
+        return results
+
+    final_results = []
+    for binary_content_list in contents:
+        final_results.append(perform_partition_list(binary_content_list))
+    return pd.Series(final_results)
+
+
+def submit_offline_job(self, file_path, silver_target_table):
     """
-    parser = argparse.ArgumentParser(
-        description="Ingest raw PDF files into a Bronze table using Databricks Autoloader."
-    )
+    Calls 'run_now' on an already-deployed Workflow (job)
+    passing the file_path & file_size as notebook parameters.
+    That notebook must define corresponding widgets:
+        dbutils.widgets.text("file_path", "")
+        dbutils.widgets.text("silver_target_table", "")
+    """
+    try:
+        job_id = workspace_utils.get_job_id_by_name(LARGE_FILE_PROCESSING_WORKFLOW_NAME)
 
-    parser.add_argument("--catalog", required=True, help="Name of the Databricks catalog.")
-    parser.add_argument("--schema", required=True, help="Name of the Databricks schema.")
-    parser.add_argument("--volume", required=True, help="Name of the volume to read PDF files from.")
-    parser.add_argument("--checkpoints_volume", required=True, help="Name of the volume for checkpoints.")
-    parser.add_argument("--table_prefix", required=True, help="Prefix for the raw files table.")
-    parser.add_argument("--reset_data", default="false",
-                        help="Whether to reset data (true/false). Default is 'false'.")
+        run_response = workspace_utils.get_client().jobs.run_now(
+            job_id=job_id,
+            notebook_params={
+                "file_path": file_path,
+                "silver_target_table": silver_target_table,
+                "parsed_img_dir": PARSED_IMG_DIR,
+            }
+        )
+        run_id = run_response.run_id
+        print(f"run_now invoked for job_id={job_id}, run_id={run_id}, file_path={file_path}")
+        return run_id
+    except Exception as e:
+        print(f"Failed to run_now for job_id={job_id}: {e}")
+        raise
 
-    args = parser.parse_args(sys.argv[1:])
 
-    # Convert reset_data to a boolean
-    args.reset_data = (args.reset_data.lower() == "true")
+def foreach_batch_function_silver(batch_df, batch_id):
+    # 1) Split data into small vs. large based on "length" column
+    df_small = batch_df.filter(F.col("length") <= LARGE_FILE_THRESHOLD)
+    df_large = batch_df.filter(F.col("length") > LARGE_FILE_THRESHOLD)
 
-    return args
+    # Process "large files"
+    # 2) For each "large" PDF, call run_now on the offline workflow
+    def submit_offline_job(file_path):
+        submit_offline_job(file_path, job_config.parsed_files_table_name)
+
+    worker_cpu_scale_factor = 2
+    max_tp_workers = os.cpu_count() * worker_cpu_scale_factor
+    with ThreadPoolExecutor(max_workers=min(8, max_tp_workers)) as executor:
+        future_map = {executor.submit(submit_offline_job, row["path"].replace("dbfs:/", "")): row for row in
+                      df_large.select("path").collect()}
+
+    for future, file_path in future_map.items():
+        try:
+            run_id = future.result()
+            print(f"Successfully submitted offline job for {file_path} -> run_id={run_id}")
+        except Exception as e:
+            print(f"Failed to submit offline job for {file_path}: {e}")
+
+    # 3) Process "small" files
+    if SALTED_PANDAS_UDF_MODE:
+        (
+            df_small.withColumn("batch_rank", (F.floor(F.rand() * 40) + 1).cast("int"))
+            .groupby("batch_rank")
+            .agg(F.collect_list("content").alias("content"))
+            .withColumn("text", F.explode(process_pdf_bytes_as_array_type("content")))
+            .drop("content")
+            .drop("batch_rank")
+            .write.mode("append")
+            .saveAsTable(job_config.parsed_files_table_name)
+        )
+    else:
+        (
+            df_small.withColumn("text", process_pdf_bytes("content"))
+            .drop("content")
+            .write.mode("append")
+            .saveAsTable(job_config.parsed_files_table_name)
+        )
 
 
 def run_silver_task(
         spark: SparkSession,
-        catalog: str,
-        schema: str,
-        volume: str,
-        checkpoints_volume: str,
-        table_prefix: str,
-        reset_data: bool
 ):
     """
     Core logic for creating the Silver table for PDF Processing,
     optionally resetting data, etc.
 
     :param spark: SparkSession
-    :param catalog: Databricks catalog name
-    :param schema_name: Databricks schema name
-    :param volume: Unity Catalog volume holding PDFs
-    :param checkpoints_volume: Volume used for checkpoint folder
-    :param table_prefix: Prefix for the Bronze table name
-    :param reset_data: Whether to drop existing data & checkpoints
     """
-    spark.sql(f"USE CATALOG {catalog};")
-    spark.sql(f"USE SCHEMA {schema};")
-    spark.sql(f"CREATE VOLUME IF NOT EXISTS {checkpoints_volume}")
+    spark.sql(f"USE CATALOG {job_config.catalog};")
+    spark.sql(f"USE SCHEMA {job_config.schema};")
+    spark.sql(f"CREATE VOLUME IF NOT EXISTS {job_config.checkpoints_volume}")
 
-    print(f"Use Unit Catalog: {catalog}")
-    print(f"Use Schema: {schema}")
-    print(f"Use Volume: {volume}")
-    print(f"Use Checkpoint Volume: {checkpoints_volume}")
-    print(f"Use Table Prefix: {table_prefix}")
-    print(f"Reset Data: {reset_data}")
+    print(f"Use Unit Catalog: {job_config.catalog}")
+    print(f"Use Schema: {job_config.schema}")
+    print(f"Use Volume: {job_config.volume}")
+    print(f"Use Checkpoint Volume: {job_config.checkpoints_volume}")
+    print(f"Use Table Prefix: {job_config.table_prefix}")
+    print(f"Reset Data: {job_config.reset_data}")
 
-    job_config = {
-        "file_format": "pdf",
-        "checkpoint_path": f"/Volumes/{catalog}/{schema}/{checkpoints_volume}",
-        "raw_files_table_name": f"{catalog}.{schema}.{table_prefix}_raw_files_foreachbatch",
-        "parsed_file_table_name": f"{catalog}.{schema}.{table_prefix}_text_from_files_foreachbatch",
-    }
     print("-------------------")
     print("Job Configuration")
     print("-------------------")
     print(json.dumps(job_config, indent=4))
 
-    if reset_data:
-        print(f"Delete checkpoints volume folder for {job_config['parsed_file_table_name']}...")
-        checkpoint_remove_path = f"/Volumes/{catalog}/{schema}/{checkpoints_volume}/{job_config['parsed_file_table_name'].split('.')[-1]}"
-        get_dbutils.fs.rm(checkpoint_remove_path, recurse=True)
+    if job_config.reset_data:
+        print(f"Delete checkpoints volume folder for {job_config.parsed_files_table_name}...")
+        checkpoint_remove_path = f"/Volumes/{job_config.catalog}/{job_config.schema}/{job_config.checkpoints_volume}/{job_config.parsed_files_table_name.split('.')[-1]}"
+        workspace_utils.get_dbutil().fs.rm(checkpoint_remove_path, recurse=True)
 
-        print(f"Delete tables {job_config['parsed_file_table_name']}...")
-        spark.sql(f"DROP TABLE IF EXISTS {job_config['parsed_file_table_name']}")
+        print(f"Delete tables {job_config.parsed_files_table_name}...")
+        spark.sql(f"DROP TABLE IF EXISTS {job_config.parsed_files_table_name}")
 
+    # Perform PDF Processing
     df_parsed_silver = (
-        spark.readStream.table(job_config.get("raw_files_table_name"))
+        spark.readStream.table(job_config.raw_files_table_name)
     )
 
     (
         df_parsed_silver.writeStream.trigger(availableNow=True)
         .option(
             "checkpointLocation",
-            f"{job_config.get('checkpoint_path')}/{job_config.get('parsed_file_table_name').split('.')[-1]}",
+            f"{job_config.checkpoint_path}/{job_config.parsed_files_table_name.split('.')[-1]}",
         )
         .foreachBatch(foreach_batch_function_silver)
         .start()
     )
 
     print("Silver table ingestion stream has been started with availableNow=True.")
+
 
 def main():
     """
@@ -109,14 +244,21 @@ def main():
     # If running locally or in tests, you can create your own SparkSession:
     spark = SparkSession.builder.getOrCreate()
 
-    run_silver_task(
-        spark,
+    global PARSED_IMG_DIR, job_config, workspace_utils
+
+    PARSED_IMG_DIR = f"/Volumes/{args.catalog}/{args.schema}/{args.volume}/parsed_images/"
+    workspace_utils = DatabricksWorkspaceUtils(spark)
+    job_config = JobConfig(
         catalog=args.catalog,
         schema=args.schema,
         volume=args.volume,
         checkpoints_volume=args.checkpoints_volume,
         table_prefix=args.table_prefix,
         reset_data=args.reset_data
+    )
+
+    run_silver_task(
+        spark
     )
 
     print("Processing job completed.")
