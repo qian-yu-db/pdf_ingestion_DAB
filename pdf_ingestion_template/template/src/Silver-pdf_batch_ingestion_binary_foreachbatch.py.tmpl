@@ -5,6 +5,7 @@
 # COMMAND ----------
 
 # MAGIC %pip install -U -qqq markdownify==0.12.1 "unstructured[local-inference, all-docs]==0.14.4" unstructured-client==0.22.0 nltk==3.8.1
+# MAGIC %pip install pdfminer.six==20221105 -q
 # MAGIC %pip install databricks-sdk -U -q
 
 # COMMAND ----------
