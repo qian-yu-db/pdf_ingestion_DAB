@@ -48,6 +48,10 @@ job_config = {
     "checkpoint_path": f"/Volumes/{catalog}/{schema}/{checkpoint_vol}",
     "raw_files_table_name": f"{catalog}.{schema}.{table_prefix}_raw_files_foreachbatch",
     "parsed_file_table_name": f"{catalog}.{schema}.{table_prefix}_text_from_files_foreachbatch",
+    "parser_name": dbutils.widgets.get("parser_name") or "unstructured",
+    "parser_kwargs": {
+        # Add any parser-specific configuration here
+    }
 }
 print("-------------------")
 print("Job Configuration")
@@ -96,6 +100,7 @@ import pandas as pd
 import time
 from functools import wraps
 from concurrent.futures import ThreadPoolExecutor
+from pdf_ingestion.parsers.factory import ParserFactory
 
 def retry_on_failure(max_retries=3, delay=1):
     """
@@ -127,105 +132,31 @@ def retry_on_failure(max_retries=3, delay=1):
         return wrapper
     return decorator
 
-
+# Initialize parser
+parser = ParserFactory.get_parser(
+    job_config["parser_name"],
+    **job_config["parser_kwargs"]
+)
 
 @F.pandas_udf("string")
 def process_pdf_bytes(contents: pd.Series) -> pd.Series:
-    """A Pandas UDF to perform PDF parsing and text extraction with Unstructured
-    OSS API.
-
-    - Multi-theading is enabled to improve performance.
-    """
-    from unstructured.partition.pdf import partition_pdf
-    from unstructured.partition.image import partition_image
-    import pandas as pd
-    import re
-    import io
-    from markdownify import markdownify as md
-
     @retry_on_failure(max_retries=5, delay=2)
     def perform_partition(raw_doc_contents_bytes):
-        pdf = io.BytesIO(raw_doc_contents_bytes)
-        raw_elements = partition_pdf(
-            file=pdf,
-            infer_table_structure=True,
-            lenguages=["eng"],
-            strategy="hi_res",
-            extract_image_block_types=["Table", "Image"],
-            extract_image_block_output_dir=PARSED_IMG_DIR,
-        )
-
-        text_content = ""
-        for section in raw_elements:
-            # Tables are parsed seperatly, add a \n to give the chunker a hint to split well.
-            if section.category == "Table":
-                if section.metadata is not None:
-                    if section.metadata.text_as_html is not None:
-                        # convert table to markdown
-                        text_content += "\n" + md(section.metadata.text_as_html) + "\n"
-                    else:
-                        text_content += " " + section.text
-                else:
-                    text_content += " " + section.text
-            # Other content often has too-aggresive splitting, merge the content
-            else:
-                text_content += " " + section.text
-
-        return text_content
-    worker_cpu_scale_factor = 2
-    max_tp_workers = os.cpu_count() * worker_cpu_scale_factor
-    with ThreadPoolExecutor(max_workers=min(8, max_tp_workers)) as executor:
-        results = list(executor.map(perform_partition, contents))
-    return pd.Series(results)
-
+        return parser.parse_pdf(raw_doc_contents_bytes)
+    
+    return contents.apply(perform_partition)
 
 @F.pandas_udf(ArrayType(StringType()))
 def process_pdf_bytes_as_array_type(contents: pd.Series) -> pd.Series:
-    from unstructured.partition.pdf import partition_pdf
-    import pandas as pd
-    import io
-
     def perform_partition(raw_doc_contents_bytes):
-        pdf = io.BytesIO(raw_doc_contents_bytes)
-        raw_elements = partition_pdf(
-            file=pdf,
-            infer_table_structure=True,
-            lenguages=["eng"],
-            strategy="hi_res",
-            extract_image_block_types=["Table", "Image"],
-            extract_image_block_output_dir=PARSED_IMG_DIR,
-        )
-
-        text_content = ""
-        for section in raw_elements:
-            # Tables are parsed seperatly, add a \n to give the chunker a hint to split well.
-            if section.category == "Table":
-                if section.metadata is not None:
-                    if section.metadata.text_as_html is not None:
-                        # convert table to markdown
-                        text_content += "\n" + md(section.metadata.text_as_html) + "\n"
-                    else:
-                        text_content += " " + section.text
-                else:
-                    text_content += " " + section.text
-            # Other content often has too-aggresive splitting, merge the content
-            else:
-                text_content += " " + section.text
-
-        return text_content
-
+        return parser.parse_pdf(raw_doc_contents_bytes)
+    
     def perform_partition_list(list_contents):
-        results = []
-        worker_cpu_scale_factor = 2
-        max_tp_workers = os.cpu_count() * worker_cpu_scale_factor
-        with ThreadPoolExecutor(max_workers=min(8, max_tp_workers)) as executor:
-            results = list(executor.map(perform_partition, list_contents))
-        return results
-
-    final_results = []
-    for binary_content_list in contents:
-        final_results.append(perform_partition_list(binary_content_list))
-    return pd.Series(final_results)
+        return parser.parse_pdf_batch(list_contents)
+    
+    if len(contents) > 0 and isinstance(contents.iloc[0], list):
+        return contents.apply(perform_partition_list)
+    return contents.apply(perform_partition)
 
 # COMMAND ----------
 
