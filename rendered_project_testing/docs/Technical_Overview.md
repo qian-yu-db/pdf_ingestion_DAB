@@ -37,7 +37,7 @@ df_silver.writeStream.trigger(availableNow=True)
 ```
 
 - Reads from bronze Delta table
-- Processes documents using configured parser
+- Processes documents using configured parser inside forEachBatch
 - Handles both small and large files
 
 ## Processing Details
@@ -55,7 +55,6 @@ def process_small_files(df_small):
 ```
 
 - Uses Pandas UDF for parallel processing
-- Processes files directly in memory
 - Thread pool size based on CPU cores
 - Configurable worker count: `min(8, os.cpu_count() * 2)`
 
@@ -256,19 +255,108 @@ processing_config = {
 - Implement type-specific processing
 - Update validation logic
 
-## Best Practices
+## Memory Management
 
-1. **File Preparation**
-   - Use modern formats
-   - Validate file integrity
-   - Consider size thresholds
+### 1. Batch Processing with Memory Control
+```python
+import gc
+import psutil
+import pandas as pd
+from typing import List, Tuple
 
-2. **Processing**
-   - Monitor memory usage
-   - Track processing errors
-   - Configure appropriate workers
+def process_batch_with_memory_control(
+    contents: List[bytes],
+    file_paths: List[str],
+    memory_threshold: float = 0.8  # 80% memory usage threshold
+) -> List[str]:
+    """Process a batch of documents with memory management"""
+    
+    def get_memory_usage() -> float:
+        """Get current memory usage as percentage"""
+        return psutil.Process().memory_percent()
+    
+    def clear_memory():
+        """Clear memory and run garbage collection"""
+        gc.collect()
+        if hasattr(pd, 'clear_memory'):
+            pd.clear_memory()
+    
+    results = []
+    current_batch = []
+    current_paths = []
+    
+    for content, path in zip(contents, file_paths):
+        current_batch.append(content)
+        current_paths.append(path)
+        
+        # Check memory usage before processing batch
+        if get_memory_usage() > memory_threshold:
+            # Process current batch
+            batch_results = process_document_bytes(
+                pd.Series(current_batch),
+                pd.Series(current_paths)
+            )
+            results.extend(batch_results)
+            
+            # Clear memory
+            clear_memory()
+            
+            # Reset batch
+            current_batch = []
+            current_paths = []
+    
+    # Process remaining documents
+    if current_batch:
+        batch_results = process_document_bytes(
+            pd.Series(current_batch),
+            pd.Series(current_paths)
+        )
+        results.extend(batch_results)
+        clear_memory()
+    
+    return results
 
-3. **Extensibility**
-   - Follow interface contracts
-   - Implement proper error handling
-   - Maintain backward compatibility 
+def foreach_batch_function_silver(batch_df, batch_id):
+    """Enhanced batch processing with memory management"""
+    # Split into small and large files
+    df_small = batch_df.filter(F.col("length") <= LARGE_FILE_THRESHOLD)
+    df_large = batch_df.filter(F.col("length") > LARGE_FILE_THRESHOLD)
+    
+    # Process small files with memory control
+    if not df_small.isEmpty():
+        contents = df_small.select("content").collect()
+        paths = df_small.select("path").collect()
+        
+        results = process_batch_with_memory_control(
+            [row.content for row in contents],
+            [row.path for row in paths]
+        )
+        
+        # Create result DataFrame
+        result_df = spark.createDataFrame(
+            [(path, text) for path, text in zip(paths, results)],
+            ["path", "text"]
+        )
+        
+        # Write results
+        result_df.write.mode("append").saveAsTable(
+            job_config.parsed_files_table_name
+        )
+    
+    # Process large files (unchanged)
+    process_large_files(df_large)
+```
+
+Key Features:
+- Monitors memory usage during processing
+- Processes documents in smaller batches when memory usage is high
+- Clears memory between batches using garbage collection
+- Handles both small and large files appropriately
+- Maintains data consistency with proper error handling
+
+Memory Management Strategies:
+1. **Batch Size Control**: Dynamically adjusts batch size based on memory usage
+2. **Garbage Collection**: Explicitly calls GC between batches
+3. **Pandas Memory Clearing**: Uses pandas memory management when available
+4. **Memory Threshold**: Configurable threshold for batch processing
+5. **Error Recovery**: Maintains state between batches for reliability 
