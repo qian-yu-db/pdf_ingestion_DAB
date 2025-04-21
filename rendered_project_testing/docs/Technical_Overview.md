@@ -59,7 +59,42 @@ def process_small_files(df_small):
 - Thread pool size based on CPU cores
 - Configurable worker count: `min(8, os.cpu_count() * 2)`
 
-### 2. Large File Processing
+### 2. Processing Modes: Salted vs Unsalted
+
+#### Unsalted Processing (Default)
+```python
+# Process each file individually
+df_small.withColumn("text", process_document_bytes("content", "path"))
+    .drop("content")
+    .write.mode("append")
+    .saveAsTable(silver_target_table)
+```
+
+- Each file processed independently
+- Simpler implementation
+- Good for smaller batches
+- Less memory overhead
+
+#### Salted Processing
+```python
+# Group files into batches using random salt
+df_small.withColumn("batch_rank", (F.floor(F.rand() * 40) + 1).cast("int"))
+    .groupby("batch_rank")
+    .agg(F.collect_list("content").alias("content"))
+    .withColumn("text", F.explode(process_document_bytes_as_array_type("content", "path")))
+    .drop("content")
+    .drop("batch_rank")
+    .write.mode("append")
+    .saveAsTable(silver_target_table)
+```
+
+- Groups files into random batches (40 groups by default)
+- Uses batch processing UDF
+- Better for large numbers of small files
+- More efficient resource utilization
+- Reduces overhead of individual UDF calls
+
+### 3. Large File Processing
 ```python
 def process_large_file(file_path: str):
     """Process files over 2GB using Databricks Workflows"""
