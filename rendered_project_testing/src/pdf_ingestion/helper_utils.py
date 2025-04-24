@@ -3,9 +3,14 @@ import sys
 import time
 from dataclasses import dataclass
 from functools import wraps
+import logging
 
 from databricks.sdk import WorkspaceClient
 from pyspark.sql import SparkSession
+
+logging.basicConfig()
+logger = logging.getLogger("helper_utils")
+logger.setLevel(logging.INFO)
 
 
 @dataclass
@@ -19,12 +24,18 @@ class JobConfig:
     file_format: str = "pdf"
 
     @property
+    def source_path(self):
+        return f"/Volumes/{self.catalog}/{self.schema}/{self.volume}/"
+
+    @property
     def checkpoint_path(self):
         return f"/Volumes/{self.catalog}/{self.schema}/{self.checkpoints_volume}"
 
     @property
     def raw_files_table_name(self):
-        return f"{self.catalog}.{self.schema}.{self.table_prefix}_raw_files_foreachbatch"
+        return (
+            f"{self.catalog}.{self.schema}.{self.table_prefix}_raw_files_foreachbatch"
+        )
 
     @property
     def parsed_files_table_name(self):
@@ -40,18 +51,33 @@ def parse_args():
         description="Ingest raw PDF files into a Bronze table using Databricks Autoloader."
     )
 
-    parser.add_argument("--catalog", required=True, help="Name of the Databricks catalog.")
-    parser.add_argument("--schema", required=True, help="Name of the Databricks schema.")
-    parser.add_argument("--volume", required=True, help="Name of the volume to read PDF files from.")
-    parser.add_argument("--checkpoints_volume", required=True, help="Name of the volume for checkpoints.")
-    parser.add_argument("--table_prefix", required=True, help="Prefix for the raw files table.")
-    parser.add_argument("--reset_data", default="false",
-                        help="Whether to reset data (true/false). Default is 'false'.")
+    parser.add_argument(
+        "--catalog", required=True, help="Name of the Databricks catalog."
+    )
+    parser.add_argument(
+        "--schema", required=True, help="Name of the Databricks schema."
+    )
+    parser.add_argument(
+        "--volume", required=True, help="Name of the volume to read PDF files from."
+    )
+    parser.add_argument(
+        "--checkpoints_volume",
+        required=True,
+        help="Name of the volume for checkpoints.",
+    )
+    parser.add_argument(
+        "--table_prefix", required=True, help="Prefix for the raw files table."
+    )
+    parser.add_argument(
+        "--reset_data",
+        default="false",
+        help="Whether to reset data (true/false). Default is 'false'.",
+    )
 
     args = parser.parse_args(sys.argv[1:])
 
     # Convert reset_data to a boolean
-    args.reset_data = (args.reset_data.lower() == "true")
+    args.reset_data = args.reset_data.lower() == "true"
 
     return args
 
@@ -73,12 +99,12 @@ def retry_on_failure(max_retries=3, delay=1):
                     return func(*args, **kwargs)
                 except Exception as e:
                     attempts += 1
-                    print(f"Attempt {attempts} failed: {e}")
+                    logger.info(f"Attempt {attempts} failed: {e}")
                     if attempts < max_retries:
-                        print(f"Retrying in {delay} seconds...")
+                        logger.info(f"Retrying in {delay} seconds...")
                         time.sleep(delay)
                     else:
-                        print("All retry attempts failed.")
+                        logger.info("All retry attempts failed.")
                         raise
 
         return wrapper
@@ -89,8 +115,15 @@ def retry_on_failure(max_retries=3, delay=1):
 class DatabricksWorkspaceUtils:
     def __init__(self, spark: SparkSession):
         self.spark = spark
-        self.hostname = self.spark.conf.get('spark.databricks.workspaceUrl')
-        self.token = self.get_dbutils().notebook.entry_point.getDbutils().notebook().getContext().apiToken().get()
+        self.hostname = self.spark.conf.get("spark.databricks.workspaceUrl")
+        self.token = (
+            self.get_dbutil()
+            .notebook.entry_point.getDbutils()
+            .notebook()
+            .getContext()
+            .apiToken()
+            .get()
+        )
 
     def get_client(self):
         """Create a Databricks workspace client."""
@@ -105,7 +138,9 @@ class DatabricksWorkspaceUtils:
         :return: job_id of the Databricks job
         """
 
-        jobs_list = self.get_client().jobs.list(expand_tasks=False, limit=100)  # returns an object
+        jobs_list = self.get_client().jobs.list(
+            expand_tasks=False, limit=100
+        )  # returns an object
         # with a `.jobs` attribute
 
         # Each element in jobs_list.jobs is a "Job" descriptor that includes:
@@ -120,11 +155,16 @@ class DatabricksWorkspaceUtils:
     def get_dbutil(self):
         """Get the Databricks DBUtils instance."""
 
-        if "local" not in self.spark.sparkContext.master:
+        if "local" not in str(self.spark.sparkContext.master):
             try:
                 import IPython
+
                 return IPython.get_ipython().user_ns["dbutils"]
-            except Exception as ex:
+            except Exception:
                 from pyspark.dbutils import DBUtils
+
                 return DBUtils(self.spark)
+
+        logger.info("Running in local mode, dbutils not available.")
+
         return None

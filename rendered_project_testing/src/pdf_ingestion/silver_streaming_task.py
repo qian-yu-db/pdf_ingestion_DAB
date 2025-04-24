@@ -1,16 +1,28 @@
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict
+import logging
 
 import pandas as pd
 import pyspark.sql.functions as F
+from pyspark.sql import SparkSession
 from pyspark.sql.types import ArrayType, StringType
 
-from .helper_utils import *
+from .helper_utils import (
+    DatabricksWorkspaceUtils,
+    JobConfig,
+    parse_args,
+    retry_on_failure,
+)
+
+logging.basicConfig()
+logger = logging.getLogger("silver_streaming_task")
+logger.setLevel(logging.INFO)
 
 SALTED_PANDAS_UDF_MODE = False
 LARGE_FILE_THRESHOLD = int(2000) * 1024 * 1024  # MB to bytes
-LARGE_FILE_PROCESSING_WORKFLOW_NAME = "Jas_Test_async_large_file_job"
+LARGE_FILE_PROCESSING_WORKFLOW_NAME = "async_large_file_job"
 
 
 @F.pandas_udf("string")
@@ -112,7 +124,7 @@ def process_pdf_bytes_as_array_type(contents: pd.Series) -> pd.Series:
     return pd.Series(final_results)
 
 
-def submit_offline_job(self, file_path, silver_target_table):
+def submit_offline_job(file_path, silver_target_table):
     """
     Calls 'run_now' on an already-deployed Workflow (job)
     passing the file_path & file_size as notebook parameters.
@@ -120,22 +132,23 @@ def submit_offline_job(self, file_path, silver_target_table):
         dbutils.widgets.text("file_path", "")
         dbutils.widgets.text("silver_target_table", "")
     """
+    job_id = workspace_utils.get_job_id_by_name(LARGE_FILE_PROCESSING_WORKFLOW_NAME)
     try:
-        job_id = workspace_utils.get_job_id_by_name(LARGE_FILE_PROCESSING_WORKFLOW_NAME)
-
         run_response = workspace_utils.get_client().jobs.run_now(
             job_id=job_id,
             notebook_params={
                 "file_path": file_path,
                 "silver_target_table": silver_target_table,
                 "parsed_img_dir": PARSED_IMG_DIR,
-            }
+            },
         )
         run_id = run_response.run_id
-        print(f"run_now invoked for job_id={job_id}, run_id={run_id}, file_path={file_path}")
+        logger.info(
+            f"run_now invoked for job_id={job_id}, run_id={run_id}, file_path={file_path}"
+        )
         return run_id
     except Exception as e:
-        print(f"Failed to run_now for job_id={job_id}: {e}")
+        logger.info(f"Failed to run_now for job_id={job_id}: {e}")
         raise
 
 
@@ -146,21 +159,25 @@ def foreach_batch_function_silver(batch_df, batch_id):
 
     # Process "large files"
     # 2) For each "large" PDF, call run_now on the offline workflow
-    def submit_offline_job(file_path):
+    def _submit_offline_job(file_path):
         submit_offline_job(file_path, job_config.parsed_files_table_name)
 
     worker_cpu_scale_factor = 2
     max_tp_workers = os.cpu_count() * worker_cpu_scale_factor
     with ThreadPoolExecutor(max_workers=min(8, max_tp_workers)) as executor:
-        future_map = {executor.submit(submit_offline_job, row["path"].replace("dbfs:/", "")): row for row in
-                      df_large.select("path").collect()}
+        future_map = {
+            executor.submit(_submit_offline_job, row["path"].replace("dbfs:/", "")): row
+            for row in df_large.select("path").collect()
+        }
 
     for future, file_path in future_map.items():
         try:
             run_id = future.result()
-            print(f"Successfully submitted offline job for {file_path} -> run_id={run_id}")
+            logger.info(
+                f"Successfully submitted offline job for {file_path} -> run_id={run_id}"
+            )
         except Exception as e:
-            print(f"Failed to submit offline job for {file_path}: {e}")
+            logger.info(f"Failed to submit offline job for {file_path}: {e}")
 
     # 3) Process "small" files
     if SALTED_PANDAS_UDF_MODE:
@@ -184,7 +201,7 @@ def foreach_batch_function_silver(batch_df, batch_id):
 
 
 def run_silver_task(
-        spark: SparkSession,
+    spark: SparkSession,
 ):
     """
     Core logic for creating the Silver table for PDF Processing,
@@ -196,30 +213,30 @@ def run_silver_task(
     spark.sql(f"USE SCHEMA {job_config.schema};")
     spark.sql(f"CREATE VOLUME IF NOT EXISTS {job_config.checkpoints_volume}")
 
-    print(f"Use Unit Catalog: {job_config.catalog}")
-    print(f"Use Schema: {job_config.schema}")
-    print(f"Use Volume: {job_config.volume}")
-    print(f"Use Checkpoint Volume: {job_config.checkpoints_volume}")
-    print(f"Use Table Prefix: {job_config.table_prefix}")
-    print(f"Reset Data: {job_config.reset_data}")
+    logger.info(f"Use Unit Catalog: {job_config.catalog}")
+    logger.info(f"Use Schema: {job_config.schema}")
+    logger.info(f"Use Volume: {job_config.volume}")
+    logger.info(f"Use Checkpoint Volume: {job_config.checkpoints_volume}")
+    logger.info(f"Use Table Prefix: {job_config.table_prefix}")
+    logger.info(f"Reset Data: {job_config.reset_data}")
 
-    print("-------------------")
-    print("Job Configuration")
-    print("-------------------")
-    print(json.dumps(job_config, indent=4))
+    logger.info("-------------------")
+    logger.info("Job Configuration")
+    logger.info("-------------------")
+    logger.info(json.dumps(asdict(job_config), indent=4))
 
     if job_config.reset_data:
-        print(f"Delete checkpoints volume folder for {job_config.parsed_files_table_name}...")
+        logger.info(
+            f"Delete checkpoints volume folder for {job_config.parsed_files_table_name}..."
+        )
         checkpoint_remove_path = f"/Volumes/{job_config.catalog}/{job_config.schema}/{job_config.checkpoints_volume}/{job_config.parsed_files_table_name.split('.')[-1]}"
         workspace_utils.get_dbutil().fs.rm(checkpoint_remove_path, recurse=True)
 
-        print(f"Delete tables {job_config.parsed_files_table_name}...")
+        logger.info(f"Delete tables {job_config.parsed_files_table_name}...")
         spark.sql(f"DROP TABLE IF EXISTS {job_config.parsed_files_table_name}")
 
     # Perform PDF Processing
-    df_parsed_silver = (
-        spark.readStream.table(job_config.raw_files_table_name)
-    )
+    df_parsed_silver = spark.readStream.table(job_config.raw_files_table_name)
 
     (
         df_parsed_silver.writeStream.trigger(availableNow=True)
@@ -231,7 +248,7 @@ def run_silver_task(
         .start()
     )
 
-    print("Silver table ingestion stream has been started with availableNow=True.")
+    logger.info("Silver table ingestion stream has been started with availableNow=True.")
 
 
 def main():
@@ -246,7 +263,9 @@ def main():
 
     global PARSED_IMG_DIR, job_config, workspace_utils
 
-    PARSED_IMG_DIR = f"/Volumes/{args.catalog}/{args.schema}/{args.volume}/parsed_images/"
+    PARSED_IMG_DIR = (
+        f"/Volumes/{args.catalog}/{args.schema}/{args.volume}/parsed_images/"
+    )
     workspace_utils = DatabricksWorkspaceUtils(spark)
     job_config = JobConfig(
         catalog=args.catalog,
@@ -254,14 +273,12 @@ def main():
         volume=args.volume,
         checkpoints_volume=args.checkpoints_volume,
         table_prefix=args.table_prefix,
-        reset_data=args.reset_data
+        reset_data=args.reset_data,
     )
 
-    run_silver_task(
-        spark
-    )
+    run_silver_task(spark)
 
-    print("Processing job completed.")
+    logger.info("Processing job completed.")
 
 
 if __name__ == "__main__":
