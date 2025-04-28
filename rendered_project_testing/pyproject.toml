@@ -1,0 +1,86 @@
+[project]
+name = "pdf_ingestion"
+version = "0.0.1"
+description = "A Python package for scalable PDF processing on Databricks, featuring text and table extraction."
+authors = [
+    { name = "Jas Bali", email = "jas.bali@databricks.com" },
+    { name = "Qian Yu", email = "q.yu@databricks.com" },
+]
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "pyspark>=3.5.0,<4",
+    "markdownify==0.12.1",
+    "nltk==3.8.1",
+    "unstructured[local-inference, all-docs]==0.14.4",
+    "unstructured-client==0.22.0",
+    "databricks-sdk>=0.1.0,<0.2",
+    "pdfminer.six==20221105",
+    "pyarrow>=19.0.1,<20",
+    "numpy<2.0.0",
+    "ipython"
+]
+
+[project.scripts]
+bronze_entrypoint = "pdf_ingestion.bronze_streaming_task:main"
+silver_entrypoint = "pdf_ingestion.silver_streaming_task:main"
+large_file_async_entrypoint = "pdf_ingestion.large_file_async_task:main"
+reporting_entrypoint = "pdf_ingestion.reporting_task:main"
+
+[dependency-groups]
+dev = [
+    "python-dotenv~=1.0",
+    "pytest>=7.0.0,<8",
+    "pytest-cov>=4.0.0,<5",
+    "pytest-mock>=3.10.0,<4",
+    "coverage>=6.0.0,<7",
+    "pytest-spark>=0.3.0,<0.4",
+]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/pdf_ingestion"]
+
+[tool.hatch.build.targets.wheel]
+include = ["src/pdf_ingestion"]
+
+[tool.hatch.build.targets.wheel.sources]
+"src/pdf_ingestion" = "pdf_ingestion"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
+python_files = "test_*.py"
+addopts = "--cov=src.pdf_ingestion"
+spark_options = [
+    "spark.app.name=pdf-ingestion-tests",
+    "spark.default.parallelism=4",
+    "spark.dynamicAllocation.enabled=false",
+    "spark.executor.cores=1",
+    "spark.executor.instances=1",
+    "spark.io.compression.codec=lz4",
+    "spark.rdd.compress=false",
+    "spark.sql.shuffle.partitions=4",
+    "spark.shuffle.compress=false",
+    "spark.sql.execution.arrow.pyspark.enabled=true",
+    "spark.driver.bindAddress=127.0.0.1"
+]
+
+[tool.coverage.run]
+source = ["src.pdf_ingestion"]
+omit = [
+    "*/__init__.py",
+    "*/test_*.py",
+    "test/conftest.py"
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "pass",
+    "raise ImportError"
+]
