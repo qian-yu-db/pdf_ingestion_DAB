@@ -69,6 +69,7 @@ df_small.withColumn("text", process_document_bytes("content", "path"))
     .saveAsTable(silver_target_table)
 ```
 
+- `@F.pandas_udf(StringType())`
 - Each file processed independently
 - Simpler implementation
 - Good for smaller batches
@@ -87,6 +88,7 @@ df_small.withColumn("batch_rank", (F.floor(F.rand() * 40) + 1).cast("int"))
     .saveAsTable(silver_target_table)
 ```
 
+- `@F.pandas_udf(ArrayType(StringType()))`
 - Groups files into random batches (40 groups by default)
 - Uses batch processing UDF
 - Better for large numbers of small files
@@ -154,6 +156,11 @@ class ParserFactory:
         # if parser_type == "databricks_ai":
         #     return DatabricksAIParser(**kwargs)
 ```
+
+- `unstructured` (<b>Available</b>)
+- `ai_parse/ai_extract_table_schema/ai_extract_table_data` (<b>Backlog</b>)
+- Databricks' Tesseract OCR for metadata extraction - UnstructuredToMetadata backend (Based on Tess4J) (<b>Backlog</b>)
+
 
 ### 2. File Type Support
 ```python
@@ -255,7 +262,7 @@ processing_config = {
 - Implement type-specific processing
 - Update validation logic
 
-## Memory Management
+## Memory Management (Experimental)
 
 ### 1. Batch Processing with Memory Control
 ```python
@@ -263,7 +270,6 @@ import gc
 import psutil
 import pandas as pd
 from typing import List, Tuple
-
 
 def process_batch_with_memory_control(
     contents: List[bytes],
@@ -353,11 +359,9 @@ Key Features:
 - Processes documents in smaller batches when memory usage is high
 - Clears memory between batches using garbage collection
 - Handles both small and large files appropriately
-- Maintains data consistency with proper error handling
 
 Memory Management Strategies:
 1. **Batch Size Control**: Dynamically adjusts batch size based on memory usage
 2. **Garbage Collection**: Explicitly calls GC between batches
 3. **Pandas Memory Clearing**: Uses pandas memory management when available
 4. **Memory Threshold**: Configurable threshold for batch processing
-5. **Error Recovery**: Maintains state between batches for reliability 
