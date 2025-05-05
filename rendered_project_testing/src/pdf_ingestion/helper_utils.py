@@ -22,6 +22,7 @@ class JobConfig:
     table_prefix: str
     reset_data: bool
     file_format: str = "pdf"
+    parser_type: str = "unstructured"
 
     @property
     def source_path(self):
@@ -43,43 +44,51 @@ class JobConfig:
 
 
 def parse_args():
-    """
-    Parse command-line arguments (similar to dbutils.widgets).
-    Returns an argparse.Namespace with all parameters.
-    """
-    parser = argparse.ArgumentParser(
-        description="Ingest raw PDF files into a Bronze table using Databricks Autoloader."
-    )
-
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(description="PDF Ingestion Pipeline")
     parser.add_argument(
-        "--catalog", required=True, help="Name of the Databricks catalog."
+        "--catalog",
+        type=str,
+        required=True,
+        help="Catalog name",
     )
     parser.add_argument(
-        "--schema", required=True, help="Name of the Databricks schema."
+        "--schema",
+        type=str,
+        required=True,
+        help="Schema name",
     )
     parser.add_argument(
-        "--volume", required=True, help="Name of the volume to read PDF files from."
+        "--volume",
+        type=str,
+        required=True,
+        help="Volume name",
     )
     parser.add_argument(
         "--checkpoints_volume",
+        type=str,
         required=True,
-        help="Name of the volume for checkpoints.",
+        help="Checkpoints volume name",
     )
     parser.add_argument(
-        "--table_prefix", required=True, help="Prefix for the raw files table."
+        "--table_prefix",
+        type=str,
+        required=True,
+        help="Table prefix",
     )
     parser.add_argument(
         "--reset_data",
-        default="false",
-        help="Whether to reset data (true/false). Default is 'false'.",
+        action="store_true",
+        help="Reset data",
     )
-
-    args = parser.parse_args(sys.argv[1:])
-
-    # Convert reset_data to a boolean
-    args.reset_data = args.reset_data.lower() == "true"
-
-    return args
+    parser.add_argument(
+        "--parser_type",
+        type=str,
+        default="unstructured",
+        choices=["unstructured", "databricks"],  # Add more parser types as they become available
+        help="Type of parser to use for document processing",
+    )
+    return parser.parse_args()
 
 
 def retry_on_failure(max_retries=3, delay=1):

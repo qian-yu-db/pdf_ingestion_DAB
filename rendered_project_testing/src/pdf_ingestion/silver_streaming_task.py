@@ -9,12 +9,14 @@ import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
 from pyspark.sql.types import ArrayType, StringType
 
-from .helper_utils import (
+from helper_utils import (
     DatabricksWorkspaceUtils,
     JobConfig,
     parse_args,
     retry_on_failure,
 )
+from parsers.factory import ParserFactory
+from parsers.base import FileType
 
 logging.basicConfig()
 logger = logging.getLogger("silver_streaming_task")
@@ -24,105 +26,97 @@ SALTED_PANDAS_UDF_MODE = False
 LARGE_FILE_THRESHOLD = int(2000) * 1024 * 1024  # MB to bytes
 LARGE_FILE_PROCESSING_WORKFLOW_NAME = "async_large_file_job"
 
+# Global variables
+parser = None
+PARSED_IMG_DIR = None
 
 @F.pandas_udf("string")
-def process_pdf_bytes(contents: pd.Series) -> pd.Series:
-    """A Pandas UDF to perform PDF parsing and text extraction with Unstructured
-    OSS API.
-
-    - Multi-theading is enabled to improve performance.
+def process_document_bytes(contents: pd.Series, file_paths: pd.Series) -> pd.Series:
+    """A Pandas UDF to perform document parsing and text extraction.
+    
+    Args:
+        contents: Series of document contents as bytes
+        file_paths: Series of file paths corresponding to the contents
+        
+    Returns:
+        pd.Series: Series of extracted text content
     """
-    from unstructured.partition.pdf import partition_pdf
-    import pandas as pd
-    import io
-    from markdownify import markdownify as md
-
     @retry_on_failure(max_retries=5, delay=2)
-    def perform_partition(raw_doc_contents_bytes):
-        pdf = io.BytesIO(raw_doc_contents_bytes)
-        raw_elements = partition_pdf(
-            file=pdf,
-            infer_table_structure=True,
-            lenguages=["eng"],
-            strategy="hi_res",
-            extract_image_block_types=["Table", "Image"],
-            extract_image_block_output_dir=PARSED_IMG_DIR,
-        )
-
-        text_content = ""
-        for section in raw_elements:
-            # Tables are parsed separately, add a \n to give the chunker a hint to split well.
-            if section.category == "Table":
-                if section.metadata is not None:
-                    if section.metadata.text_as_html is not None:
-                        # convert table to markdown
-                        text_content += "\n" + md(section.metadata.text_as_html) + "\n"
-                    else:
-                        text_content += " " + section.text
-                else:
-                    text_content += " " + section.text
-            # Other content often has too-aggresive splitting, merge the content
-            else:
-                text_content += " " + section.text
-
-        return text_content
-
+    def perform_partition(raw_doc_contents_bytes, file_path):
+        try:
+            file_type = get_file_type(file_path)
+            return parser.parse_document(raw_doc_contents_bytes, file_type)
+        except ValueError as e:
+            logger.error(f"Error processing file {file_path}: {str(e)}")
+            return f"ERROR: {str(e)}"
+        except Exception as e:
+            logger.error(f"Error processing file {file_path}: {str(e)}")
+            return f"ERROR: {str(e)}"
+    
     worker_cpu_scale_factor = 2
     max_tp_workers = os.cpu_count() * worker_cpu_scale_factor
     with ThreadPoolExecutor(max_workers=min(8, max_tp_workers)) as executor:
-        results = list(executor.map(perform_partition, contents))
+        results = list(executor.map(perform_partition, contents, file_paths))
     return pd.Series(results)
 
-
 @F.pandas_udf(ArrayType(StringType()))
-def process_pdf_bytes_as_array_type(contents: pd.Series) -> pd.Series:
-    from unstructured.partition.pdf import partition_pdf
-    import pandas as pd
-    import io
-    from markdownify import markdownify as md
+def process_document_bytes_as_array_type(contents: pd.Series, file_paths: pd.Series) -> pd.Series:
+    """A Pandas UDF to perform batch document parsing and text extraction.
+    
+    Args:
+        contents: Series of document contents as bytes or lists of bytes
+        file_paths: Series of file paths corresponding to the contents
+        
+    Returns:
+        pd.Series: Series of extracted text content
+    """
+    def perform_partition(raw_doc_contents_bytes, file_path):
+        try:
+            file_type = get_file_type(file_path)
+            return parser.parse_document(raw_doc_contents_bytes, file_type)
+        except ValueError as e:
+            logger.error(f"Error processing file {file_path}: {str(e)}")
+            return f"ERROR: {str(e)}"
+        except Exception as e:
+            logger.error(f"Error processing file {file_path}: {str(e)}")
+            return f"ERROR: {str(e)}"
+    
+    def perform_partition_list(list_contents, list_file_paths):
+        try:
+            file_types = [get_file_type(path) for path in list_file_paths]
+            return parser.parse_document_batch(list_contents, file_types)
+        except ValueError as e:
+            logger.error(f"Error processing batch: {str(e)}")
+            return [f"ERROR: {str(e)}"] * len(list_contents)
+        except Exception as e:
+            logger.error(f"Error processing batch: {str(e)}")
+            return [f"ERROR: {str(e)}"] * len(list_contents)
+    
+    if len(contents) > 0 and isinstance(contents.iloc[0], list):
+        return contents.apply(perform_partition_list, args=(file_paths,))
+    return contents.apply(perform_partition, args=(file_paths,))
 
-    def perform_partition(raw_doc_contents_bytes):
-        pdf = io.BytesIO(raw_doc_contents_bytes)
-        raw_elements = partition_pdf(
-            file=pdf,
-            infer_table_structure=True,
-            lenguages=["eng"],
-            strategy="hi_res",
-            extract_image_block_types=["Table", "Image"],
-            extract_image_block_output_dir=PARSED_IMG_DIR,
+def get_file_type(file_path: str) -> FileType:
+    """Get the file type from the file path.
+    
+    Args:
+        file_path: Path to the file
+        
+    Returns:
+        FileType: The type of the file
+        
+    Raises:
+        ValueError: If the file extension is not supported
+    """
+    ext = os.path.splitext(file_path)[1].lower().lstrip('.')
+    try:
+        return FileType(ext)
+    except ValueError:
+        supported_formats = ", ".join(f".{ft.value}" for ft in FileType)
+        raise ValueError(
+            f"Unsupported file extension: .{ext}. "
+            f"Supported formats are: {supported_formats}"
         )
-
-        text_content = ""
-        for section in raw_elements:
-            # Tables are parsed seperatly, add a \n to give the chunker a hint to split well.
-            if section.category == "Table":
-                if section.metadata is not None:
-                    if section.metadata.text_as_html is not None:
-                        # convert table to markdown
-                        text_content += "\n" + md(section.metadata.text_as_html) + "\n"
-                    else:
-                        text_content += " " + section.text
-                else:
-                    text_content += " " + section.text
-            # Other content often has too-aggresive splitting, merge the content
-            else:
-                text_content += " " + section.text
-
-        return text_content
-
-    def perform_partition_list(list_contents):
-        results = []
-        worker_cpu_scale_factor = 2
-        max_tp_workers = os.cpu_count() * worker_cpu_scale_factor
-        with ThreadPoolExecutor(max_workers=min(8, max_tp_workers)) as executor:
-            results = list(executor.map(perform_partition, list_contents))
-        return results
-
-    final_results = []
-    for binary_content_list in contents:
-        final_results.append(perform_partition_list(binary_content_list))
-    return pd.Series(final_results)
-
 
 def submit_offline_job(file_path, silver_target_table):
     """
@@ -148,9 +142,8 @@ def submit_offline_job(file_path, silver_target_table):
         )
         return run_id
     except Exception as e:
-        logger.info(f"Failed to run_now for job_id={job_id}: {e}")
+        logger.error(f"Failed to run_now for job_id={job_id}: {e}")
         raise
-
 
 def foreach_batch_function_silver(batch_df, batch_id):
     # 1) Split data into small vs. large based on "length" column
@@ -158,7 +151,7 @@ def foreach_batch_function_silver(batch_df, batch_id):
     df_large = batch_df.filter(F.col("length") > LARGE_FILE_THRESHOLD)
 
     # Process "large files"
-    # 2) For each "large" PDF, call run_now on the offline workflow
+    # 2) For each "large" file, call run_now on the offline workflow
     def _submit_offline_job(file_path):
         submit_offline_job(file_path, job_config.parsed_files_table_name)
 
@@ -177,7 +170,7 @@ def foreach_batch_function_silver(batch_df, batch_id):
                 f"Successfully submitted offline job for {file_path} -> run_id={run_id}"
             )
         except Exception as e:
-            logger.info(f"Failed to submit offline job for {file_path}: {e}")
+            logger.error(f"Failed to submit offline job for {file_path}: {e}")
 
     # 3) Process "small" files
     if SALTED_PANDAS_UDF_MODE:
@@ -185,7 +178,7 @@ def foreach_batch_function_silver(batch_df, batch_id):
             df_small.withColumn("batch_rank", (F.floor(F.rand() * 40) + 1).cast("int"))
             .groupby("batch_rank")
             .agg(F.collect_list("content").alias("content"))
-            .withColumn("text", F.explode(process_pdf_bytes_as_array_type("content")))
+            .withColumn("text", F.explode(process_document_bytes_as_array_type("content", "path")))
             .drop("content")
             .drop("batch_rank")
             .write.mode("append")
@@ -193,12 +186,11 @@ def foreach_batch_function_silver(batch_df, batch_id):
         )
     else:
         (
-            df_small.withColumn("text", process_pdf_bytes("content"))
+            df_small.withColumn("text", process_document_bytes("content", "path"))
             .drop("content")
             .write.mode("append")
             .saveAsTable(job_config.parsed_files_table_name)
         )
-
 
 def run_silver_task(
     spark: SparkSession,
@@ -261,7 +253,7 @@ def main():
     # If running locally or in tests, you can create your own SparkSession:
     spark = SparkSession.builder.getOrCreate()
 
-    global PARSED_IMG_DIR, job_config, workspace_utils
+    global PARSED_IMG_DIR, job_config, workspace_utils, parser
 
     PARSED_IMG_DIR = (
         f"/Volumes/{args.catalog}/{args.schema}/{args.volume}/parsed_images/"
@@ -274,6 +266,17 @@ def main():
         checkpoints_volume=args.checkpoints_volume,
         table_prefix=args.table_prefix,
         reset_data=args.reset_data,
+        parser_type=args.parser_type,
+    )
+
+    # Initialize parser with configuration
+    parser = ParserFactory.get_parser(
+        parser_type=job_config.parser_type,
+        infer_table_structure=True,
+        languages=["eng"],
+        strategy="hi_res",
+        extract_image_block_types=["Table", "Image"],
+        extract_image_block_output_dir=PARSED_IMG_DIR
     )
 
     run_silver_task(spark)
