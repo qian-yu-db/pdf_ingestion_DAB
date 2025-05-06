@@ -42,11 +42,12 @@ def run_bronze_task(
 
     # 4) If reset_data == True, remove existing table/checkpoints
     if job_config.reset_data:
-        logger.info(
-            f"Delete checkpoints volume folder for {job_config.raw_files_table_name} ..."
-        )
         # We can remove a path using Spark APIs or dbutils:
-        checkpoint_remove_path = f"/{job_config.checkpoint_path}/{job_config.raw_files_table_name.split('.')[-1]}"
+        checkpoint_remove_path = f"{job_config.checkpoint_path}/{job_config.raw_files_table_name.split('.')[-1]}"
+
+        logger.info(
+            f"Delete checkpoints volume folder {checkpoint_remove_path} ..."
+        )
         workspace_utils.get_dbutil().fs.rm(checkpoint_remove_path, True)
 
         logger.info(f"Drop table {job_config.raw_files_table_name}...")
@@ -96,6 +97,7 @@ def main():
         checkpoints_volume=args.checkpoints_volume,
         table_prefix=args.table_prefix,
         reset_data=args.reset_data,
+        file_format=args.file_format
     )
 
     run_bronze_task(spark)

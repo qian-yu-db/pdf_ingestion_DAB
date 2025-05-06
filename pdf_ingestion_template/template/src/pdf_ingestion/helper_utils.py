@@ -73,6 +73,12 @@ def parse_args():
         default="false",
         help="Whether to reset data (true/false). Default is 'false'.",
     )
+    parser.add_argument(
+        "--file_format",
+        required=False,
+        default="pdf",
+        help="input file format."
+    )
 
     args = parser.parse_args(sys.argv[1:])
 

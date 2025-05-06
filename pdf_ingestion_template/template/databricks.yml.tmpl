@@ -4,11 +4,16 @@ bundle:
   name: {{.project_name}}
 
 include:
-  - resources/*.yml
+  - resources/dab/*.yml
+
+artifacts:
+  default:
+    type: whl
+    build: uv build --wheel
 
 variables:
   cloud_provider:
-    description: "Cloud provider"
+    description: "cloud provider"
     default: {{.cloud_provider}}
   node_type_id:
     description: "node type id"
@@ -37,6 +42,9 @@ variables:
   table_prefix:
     description: "output table prefix"
     default: my_project
+  file_format:
+    description: "input file format (extension)"
+    default: pdf
 
 targets:
   # The deployment targets. See https://docs.databricks.com/en/dev-tools/bundles/deployment-modes.html

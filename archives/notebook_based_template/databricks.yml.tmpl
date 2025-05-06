@@ -1,17 +1,15 @@
-# This is the configuration for the Databricks Asset Bundle Jas_Test.
+# This is the configuration for the Databricks Asset Bundle {{.project_name}}.
 
 bundle:
-  name: Jas_Test
+  name: {{.project_name}}
 
 include:
-  - resources/dab/*.yml
-
-artifacts:
-  default:
-    type: whl
-    build: poetry build
+  - resources/*.yml
 
 variables:
+  cloud_provider:
+    description: "Cloud provider"
+    default: {{.cloud_provider}}
   node_type_id:
     description: "node type id"
     default: m5d.2xlarge
@@ -46,14 +44,16 @@ targets:
     mode: development
     default: true
     workspace:
-      host: https://e2-demo-field-eng.cloud.databricks.com
+      host: {{workspace_host}}
 
   prod:
     mode: production
     workspace:
-      host: https://e2-demo-field-eng.cloud.databricks.com
+      host: {{workspace_host}}
       root_path: /Shared/.bundle/prod/${bundle.name}
+    {{- if not is_service_principal}}
     run_as:
-      # This runs as jas.bali@databricks.com in production. Alternatively,
+      # This runs as {{user_name}} in production. Alternatively,
       # a service principal could be used here using service_principal_name
-      user_name: jas.bali@databricks.com
+      user_name: {{user_name}}
+    {{end -}}

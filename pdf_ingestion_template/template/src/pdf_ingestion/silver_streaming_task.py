@@ -226,10 +226,11 @@ def run_silver_task(
     logger.info(json.dumps(asdict(job_config), indent=4))
 
     if job_config.reset_data:
+        checkpoint_remove_path = f"{job_config.checkpoint_path}/{job_config.parsed_files_table_name.split('.')[-1]}"
+
         logger.info(
-            f"Delete checkpoints volume folder for {job_config.parsed_files_table_name}..."
+            f"Delete checkpoints volume folder {checkpoint_remove_path}..."
         )
-        checkpoint_remove_path = f"/Volumes/{job_config.catalog}/{job_config.schema}/{job_config.checkpoints_volume}/{job_config.parsed_files_table_name.split('.')[-1]}"
         workspace_utils.get_dbutil().fs.rm(checkpoint_remove_path, recurse=True)
 
         logger.info(f"Delete tables {job_config.parsed_files_table_name}...")
@@ -274,6 +275,7 @@ def main():
         checkpoints_volume=args.checkpoints_volume,
         table_prefix=args.table_prefix,
         reset_data=args.reset_data,
+        file_format=args.file_format
     )
 
     run_silver_task(spark)
