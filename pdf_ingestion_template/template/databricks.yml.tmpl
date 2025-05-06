@@ -17,7 +17,11 @@ variables:
     default: {{.cloud_provider}}
   node_type_id:
     description: "node type id"
+    {{- if eq .cloud_provider "aws"}}
     default: m5d.2xlarge
+    {{- else if eq .cloud_provider "azure"}}
+    default: Standard_D8ads_v5
+    {{ end }}
   num_workers:
     description: "number of workers"
     default: 40

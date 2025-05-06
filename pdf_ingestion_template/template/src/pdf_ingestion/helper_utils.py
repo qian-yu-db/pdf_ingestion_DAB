@@ -133,6 +133,7 @@ class DatabricksWorkspaceUtils:
 
     def get_client(self):
         """Create a Databricks workspace client."""
+        logger.info("Creating Databricks workspace client.")
         return WorkspaceClient(host=self.hostname, token=self.token)
 
     def get_job_id_by_name(self, workflow_name: str) -> int:
@@ -151,9 +152,11 @@ class DatabricksWorkspaceUtils:
 
         # Each element in jobs_list.jobs is a "Job" descriptor that includes:
         # job_id, created_time, settings, etc.
+        logger.info(f"Finding large job: {workflow_name}.")
         for job_desc in jobs_list:
             # job_desc.settings is a "JobSettings" object with a `.name` attribute
             if job_desc.settings.name == workflow_name:
+                logger.info(f"Finding large job id: {job_desc.id}.")
                 return job_desc.job_id
 
         raise ValueError(f"No job found with the name: {workflow_name}")
@@ -162,6 +165,7 @@ class DatabricksWorkspaceUtils:
         """Get the Databricks DBUtils instance."""
 
         if "local" not in str(self.spark.sparkContext.master):
+            logger.info("Running in a databricks workspace.")
             try:
                 import IPython
 

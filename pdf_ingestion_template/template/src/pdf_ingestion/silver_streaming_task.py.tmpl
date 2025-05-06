@@ -21,8 +21,8 @@ logger = logging.getLogger("silver_streaming_task")
 logger.setLevel(logging.INFO)
 
 SALTED_PANDAS_UDF_MODE = False
-LARGE_FILE_THRESHOLD = int(2000) * 1024 * 1024  # MB to bytes
-LARGE_FILE_PROCESSING_WORKFLOW_NAME = "async_large_file_job"
+LARGE_FILE_THRESHOLD = int({{.async_large_file_threshold_in_mb}}) * 1024 * 1024  # MB to bytes
+LARGE_FILE_PROCESSING_WORKFLOW_NAME = "{{.project_name}}_async_large_file_job"
 
 
 @F.pandas_udf("string")
