@@ -15,132 +15,118 @@ from .helper_utils import (
     parse_args,
     retry_on_failure,
 )
+from .parsers.factory import ParserFactory
+from .parsers.base import FileType
 
 logging.basicConfig()
 logger = logging.getLogger("silver_streaming_task")
 logger.setLevel(logging.INFO)
 
 SALTED_PANDAS_UDF_MODE = False
-LARGE_FILE_THRESHOLD = int({{.async_large_file_threshold_in_mb}}) * 1024 * 1024  # MB to bytes
-LARGE_FILE_PROCESSING_WORKFLOW_NAME = "{{.project_name}}_async_large_file_job"
+LARGE_FILE_THRESHOLD = int({{.Values.async_large_file_threshold_in_mb}}) * 1024 * 1024  # MB to bytes
+LARGE_FILE_PROCESSING_WORKFLOW_NAME = "{{.Values.project_name}}_async_large_file_job"
 
+# Global variables, will be initialized in main()
+parser = None
+PARSED_IMG_DIR = None # Used by UnstructuredParser for image extraction
+job_config = None # Will be initialized in main
+workspace_utils = None # Will be initialized in main
+
+
+def get_file_type(file_path: str) -> FileType:
+    """Determines the file type from the file extension."""
+    ext = os.path.splitext(file_path)[1].lower().lstrip('.')
+    try:
+        # Handle image files
+        if ext in ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'tiff', 'webp']:
+            return FileType.IMG
+        # Handle email files
+        if ext in ['eml', 'msg']:
+            return FileType.EMAIL
+        # Handle other supported formats
+        return FileType(ext)
+    except ValueError:
+        supported_formats = ", ".join(f".{ft.value}" for ft in FileType)
+        logger.warning(f"Unsupported file extension: '{ext}' for file {file_path}. Supported: {supported_formats}")
+        raise ValueError(f"Unsupported file extension: '{ext}'. Supported: {supported_formats}")
 
 @F.pandas_udf("string")
-def process_pdf_bytes(contents: pd.Series) -> pd.Series:
-    """A Pandas UDF to perform PDF parsing and text extraction with Unstructured
-    OSS API.
+def process_document_bytes(contents: pd.Series, file_paths: pd.Series) -> pd.Series:
+    """Pandas UDF to process a series of document contents using the configured parser."""
+    
+    @retry_on_failure(max_retries=3, delay=2)
+    def perform_partition_on_single_doc(content_bytes, path_str):
+        if content_bytes is None:
+            logger.warning(f"Skipping null content for file: {path_str}")
+            return "ERROR: Null content"
+        try:
+            file_type = get_file_type(path_str)
+            return parser.parse_document(content_bytes, file_type)
+        except Exception as e:
+            logger.error(f"Failed to parse document {path_str}: {e}")
+            return f"ERROR: {str(e)}"
 
-    - Multi-theading is enabled to improve performance.
-    """
-    from unstructured.partition.pdf import partition_pdf
-    import pandas as pd
-    import io
-    from markdownify import markdownify as md
-
-    @retry_on_failure(max_retries=5, delay=2)
-    def perform_partition(raw_doc_contents_bytes):
-        pdf = io.BytesIO(raw_doc_contents_bytes)
-        raw_elements = partition_pdf(
-            file=pdf,
-            infer_table_structure=True,
-            lenguages=["eng"],
-            strategy="hi_res",
-            extract_image_block_types=["Table", "Image"],
-            extract_image_block_output_dir=PARSED_IMG_DIR,
-        )
-
-        text_content = ""
-        for section in raw_elements:
-            # Tables are parsed separately, add a \n to give the chunker a hint to split well.
-            if section.category == "Table":
-                if section.metadata is not None:
-                    if section.metadata.text_as_html is not None:
-                        # convert table to markdown
-                        text_content += "\n" + md(section.metadata.text_as_html) + "\n"
-                    else:
-                        text_content += " " + section.text
-                else:
-                    text_content += " " + section.text
-            # Other content often has too-aggresive splitting, merge the content
-            else:
-                text_content += " " + section.text
-
-        return text_content
-
-    worker_cpu_scale_factor = 2
-    max_tp_workers = os.cpu_count() * worker_cpu_scale_factor
-    with ThreadPoolExecutor(max_workers=min(8, max_tp_workers)) as executor:
-        results = list(executor.map(perform_partition, contents))
+    worker_cpu_scale_factor = 2 
+    max_workers = min(8, os.cpu_count() * worker_cpu_scale_factor)
+    
+    results = []
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        results = list(executor.map(perform_partition_on_single_doc, contents, file_paths))
     return pd.Series(results)
 
 
 @F.pandas_udf(ArrayType(StringType()))
-def process_pdf_bytes_as_array_type(contents: pd.Series) -> pd.Series:
-    from unstructured.partition.pdf import partition_pdf
-    import pandas as pd
-    import io
-    from markdownify import markdownify as md
+def process_document_bytes_as_array_type(batch_contents: pd.Series, batch_file_paths: pd.Series) -> pd.Series:
+    """Pandas UDF for salted processing, parses a list of documents in each UDF call."""
+    
+    processed_batches = []
+    for list_of_contents, list_of_paths in zip(batch_contents, batch_file_paths):
+        parsed_texts_for_batch = []
+        if not isinstance(list_of_contents, list) or not isinstance(list_of_paths, list):
+            logger.error("Salted UDF expects lists of contents and paths for each row.")
+            # Create a list of error strings matching the expected output structure for this row
+            num_expected_items = 1
+            if isinstance(list_of_contents, list): # Best guess if one is a list and other isn't
+                num_expected_items = len(list_of_contents)
+            elif isinstance(list_of_paths, list):
+                num_expected_items = len(list_of_paths)
+            processed_batches.append([f"ERROR: Invalid batch input format"] * num_expected_items)
+            continue
 
-    def perform_partition(raw_doc_contents_bytes):
-        pdf = io.BytesIO(raw_doc_contents_bytes)
-        raw_elements = partition_pdf(
-            file=pdf,
-            infer_table_structure=True,
-            lenguages=["eng"],
-            strategy="hi_res",
-            extract_image_block_types=["Table", "Image"],
-            extract_image_block_output_dir=PARSED_IMG_DIR,
-        )
-
-        text_content = ""
-        for section in raw_elements:
-            # Tables are parsed seperatly, add a \n to give the chunker a hint to split well.
-            if section.category == "Table":
-                if section.metadata is not None:
-                    if section.metadata.text_as_html is not None:
-                        # convert table to markdown
-                        text_content += "\n" + md(section.metadata.text_as_html) + "\n"
-                    else:
-                        text_content += " " + section.text
-                else:
-                    text_content += " " + section.text
-            # Other content often has too-aggresive splitting, merge the content
-            else:
-                text_content += " " + section.text
-
-        return text_content
-
-    def perform_partition_list(list_contents):
-        results = []
-        worker_cpu_scale_factor = 2
-        max_tp_workers = os.cpu_count() * worker_cpu_scale_factor
-        with ThreadPoolExecutor(max_workers=min(8, max_tp_workers)) as executor:
-            results = list(executor.map(perform_partition, list_contents))
-        return results
-
-    final_results = []
-    for binary_content_list in contents:
-        final_results.append(perform_partition_list(binary_content_list))
-    return pd.Series(final_results)
+        for content_bytes, path_str in zip(list_of_contents, list_of_paths):
+            if content_bytes is None:
+                logger.warning(f"Skipping null content for file: {path_str} in batch")
+                parsed_texts_for_batch.append("ERROR: Null content")
+                continue
+            try:
+                file_type = get_file_type(path_str)
+                parsed_texts_for_batch.append(parser.parse_document(content_bytes, file_type))
+            except Exception as e:
+                logger.error(f"Failed to parse document {path_str} in batch: {e}")
+                parsed_texts_for_batch.append(f"ERROR: {str(e)}")
+        processed_batches.append(parsed_texts_for_batch)
+    return pd.Series(processed_batches)
 
 
 def submit_offline_job(file_path, silver_target_table):
     """
     Calls 'run_now' on an already-deployed Workflow (job)
     passing the file_path & file_size as notebook parameters.
-    That notebook must define corresponding widgets:
-        dbutils.widgets.text("file_path", "")
-        dbutils.widgets.text("silver_target_table", "")
     """
+    # Ensure PARSED_IMG_DIR and other necessary job_config values are accessible or passed
+    # For example, the async job might need its own parser_type and parser_kwargs
+    notebook_params = {
+        "file_path": file_path,
+        "silver_target_table": silver_target_table,
+        "parsed_img_dir": PARSED_IMG_DIR, # Global, ensure it's set
+        "parser_type": job_config.parser_type, # Pass parser type
+        # Potentially pass other parser_kwargs if the async job initializes its own parser
+    }
     job_id = workspace_utils.get_job_id_by_name(LARGE_FILE_PROCESSING_WORKFLOW_NAME)
     try:
         run_response = workspace_utils.get_client().jobs.run_now(
             job_id=job_id,
-            notebook_params={
-                "file_path": file_path,
-                "silver_target_table": silver_target_table,
-                "parsed_img_dir": PARSED_IMG_DIR,
-            },
+            notebook_params=notebook_params
         )
         run_id = run_response.run_id
         logger.info(
@@ -148,56 +134,79 @@ def submit_offline_job(file_path, silver_target_table):
         )
         return run_id
     except Exception as e:
-        logger.info(f"Failed to run_now for job_id={job_id}: {e}")
+        logger.error(f"Failed to run_now for job_id={job_id}, file_path={file_path}: {e}")
         raise
 
 
 def foreach_batch_function_silver(batch_df, batch_id):
-    # 1) Split data into small vs. large based on "length" column
+    logger.info(f"Processing batch {batch_id}; Initial count: {batch_df.count()}")
+    batch_df.persist() # Persist the batch_df to avoid recomputation
+
     df_small = batch_df.filter(F.col("length") <= LARGE_FILE_THRESHOLD)
     df_large = batch_df.filter(F.col("length") > LARGE_FILE_THRESHOLD)
 
-    # Process "large files"
-    # 2) For each "large" PDF, call run_now on the offline workflow
-    def _submit_offline_job(file_path):
-        submit_offline_job(file_path, job_config.parsed_files_table_name)
+    # Process large files first (asynchronously)
+    large_files_list = df_large.select("path").collect()
+    if large_files_list:
+        logger.info(f"Batch {batch_id}: Found {len(large_files_list)} large files to process asynchronously.")
+        def _submit_offline_job_wrapper(path_str):
+            # Assuming submit_offline_job is defined and handles Databricks API calls
+            submit_offline_job(path_str, job_config.parsed_files_table_name)
 
-    worker_cpu_scale_factor = 2
-    max_tp_workers = os.cpu_count() * worker_cpu_scale_factor
-    with ThreadPoolExecutor(max_workers=min(8, max_tp_workers)) as executor:
-        future_map = {
-            executor.submit(_submit_offline_job, row["path"].replace("dbfs:/", "")): row
-            for row in df_large.select("path").collect()
-        }
-
-    for future, file_path in future_map.items():
-        try:
-            run_id = future.result()
-            logger.info(
-                f"Successfully submitted offline job for {file_path} -> run_id={run_id}"
+        with ThreadPoolExecutor(max_workers=min(5, os.cpu_count())) as executor: # Max 5 concurrent job submissions
+            futures = [executor.submit(_submit_offline_job_wrapper, row["path"].replace("dbfs:/", "")) for row in large_files_list]
+            for future in futures:
+                try:
+                    future.result() # Wait for submission, handle exceptions if any during submission
+                except Exception as e:
+                    logger.error(f"Error submitting async job: {e}") # Log errors from submission itself
+    
+    # Process small files
+    if not df_small.isEmpty():
+        logger.info(f"Batch {batch_id}: Processing {df_small.count()} small files.")
+        if SALTED_PANDAS_UDF_MODE:
+            # For salted mode, we group by a salt, collect lists of content and paths,
+            # then explode the results after parsing.
+            salt_factor = 40 # Make this configurable if needed
+            processed_df = (
+                df_small.withColumn("batch_rank", (F.floor(F.rand() * salt_factor) + 1).cast("int"))
+                .groupby("batch_rank")
+                .agg(
+                    F.collect_list("content").alias("contents_list"),
+                    F.collect_list("path").alias("paths_list")
+                )
+                .withColumn("parsed_texts_list", 
+                            process_document_bytes_as_array_type(F.col("contents_list"), F.col("paths_list")))
+                # Explode the array of parsed texts and zip with original paths to associate them
+                .select(F.explode(F.arrays_zip(F.col("paths_list"), F.col("parsed_texts_list"))).alias("doc_info"))
+                .select(F.col("doc_info.paths_list").alias("original_path"), F.col("doc_info.parsed_texts_list").alias("text"))
             )
-        except Exception as e:
-            logger.info(f"Failed to submit offline job for {file_path}: {e}")
+        else:
+            # For unsalted mode, process documents directly
+            processed_df = (
+                df_small.withColumn("text", process_document_bytes(F.col("content"), F.col("path")))
+                .select(F.col("path").alias("original_path"), "text")
+            )
+        
+        # Filter out errors and write successes
+        success_df = processed_df.filter(~F.col("text").startswith("ERROR:"))
+        if not success_df.isEmpty():
+            success_df.write.mode("append").saveAsTable(job_config.parsed_files_table_name)
+            logger.info(f"Batch {batch_id}: Successfully wrote {success_df.count()} parsed documents.")
 
-    # 3) Process "small" files
-    if SALTED_PANDAS_UDF_MODE:
-        (
-            df_small.withColumn("batch_rank", (F.floor(F.rand() * 40) + 1).cast("int"))
-            .groupby("batch_rank")
-            .agg(F.collect_list("content").alias("content"))
-            .withColumn("text", F.explode(process_pdf_bytes_as_array_type("content")))
-            .drop("content")
-            .drop("batch_rank")
-            .write.mode("append")
-            .saveAsTable(job_config.parsed_files_table_name)
-        )
-    else:
-        (
-            df_small.withColumn("text", process_pdf_bytes("content"))
-            .drop("content")
-            .write.mode("append")
-            .saveAsTable(job_config.parsed_files_table_name)
-        )
+        # Handle errors (e.g., log or write to an error table)
+        error_df = processed_df.filter(F.col("text").startswith("ERROR:"))
+        if not error_df.isEmpty():
+            error_count = error_df.count()
+            logger.warning(f"Batch {batch_id}: Encountered {error_count} errors during parsing small files.")
+            # For example, writing errors to a specific table or location:
+            # error_df.write.mode("append").saveAsTable(job_config.parsed_files_error_table_name) 
+            # Or log a few examples:
+            for error_row in error_df.limit(5).collect():
+                logger.warning(f"  Error for file {error_row['original_path']}: {error_row['text']}")
+
+    batch_df.unpersist() # Unpersist the batch_df
+    logger.info(f"Finished processing batch {batch_id}")
 
 
 def run_silver_task(
@@ -209,16 +218,18 @@ def run_silver_task(
 
     :param spark: SparkSession
     """
+    # Ensure job_config is globally accessible or passed as an argument
     spark.sql(f"USE CATALOG {job_config.catalog};")
     spark.sql(f"USE SCHEMA {job_config.schema};")
     spark.sql(f"CREATE VOLUME IF NOT EXISTS {job_config.checkpoints_volume}")
 
-    logger.info(f"Use Unit Catalog: {job_config.catalog}")
+    logger.info(f"Use Catalog: {job_config.catalog}")
     logger.info(f"Use Schema: {job_config.schema}")
     logger.info(f"Use Volume: {job_config.volume}")
     logger.info(f"Use Checkpoint Volume: {job_config.checkpoints_volume}")
     logger.info(f"Use Table Prefix: {job_config.table_prefix}")
     logger.info(f"Reset Data: {job_config.reset_data}")
+    logger.info(f"Parser Type: {job_config.parser_type}") # Log parser type
 
     logger.info("-------------------")
     logger.info("Job Configuration")
@@ -227,16 +238,16 @@ def run_silver_task(
 
     if job_config.reset_data:
         checkpoint_remove_path = f"{job_config.checkpoint_path}/{job_config.parsed_files_table_name.split('.')[-1]}"
+        logger.info(f"Delete checkpoints volume folder {checkpoint_remove_path}...")
+        # Ensure workspace_utils is globally accessible or passed
+        if workspace_utils and workspace_utils.get_dbutil():
+            workspace_utils.get_dbutil().fs.rm(checkpoint_remove_path, recurse=True)
+        else:
+            logger.warning("DBUtils not available, cannot remove checkpoint path.")
 
-        logger.info(
-            f"Delete checkpoints volume folder {checkpoint_remove_path}..."
-        )
-        workspace_utils.get_dbutil().fs.rm(checkpoint_remove_path, recurse=True)
-
-        logger.info(f"Delete tables {job_config.parsed_files_table_name}...")
+        logger.info(f"Delete table {job_config.parsed_files_table_name}...")
         spark.sql(f"DROP TABLE IF EXISTS {job_config.parsed_files_table_name}")
 
-    # Perform PDF Processing
     df_parsed_silver = spark.readStream.table(job_config.raw_files_table_name)
 
     (
@@ -248,25 +259,15 @@ def run_silver_task(
         .foreachBatch(foreach_batch_function_silver)
         .start()
     )
-
     logger.info("Silver table ingestion stream has been started with availableNow=True.")
 
 
 def main():
-    """
-    Main entrypoint: parse args, create a SparkSession, run the bronze ingestion.
-    """
+    global job_config, workspace_utils, parser, PARSED_IMG_DIR
+
     args = parse_args()
+    spark = SparkSession.builder.appName("SilverTask_{{.Values.project_name}}").getOrCreate()
 
-    # In Databricks, spark is usually available automatically.
-    # If running locally or in tests, you can create your own SparkSession:
-    spark = SparkSession.builder.getOrCreate()
-
-    global PARSED_IMG_DIR, job_config, workspace_utils
-
-    PARSED_IMG_DIR = (
-        f"/Volumes/{args.catalog}/{args.schema}/{args.volume}/parsed_images/"
-    )
     workspace_utils = DatabricksWorkspaceUtils(spark)
     job_config = JobConfig(
         catalog=args.catalog,
@@ -275,12 +276,50 @@ def main():
         checkpoints_volume=args.checkpoints_volume,
         table_prefix=args.table_prefix,
         reset_data=args.reset_data,
+        parser_type=args.parser_type,
         file_format=args.file_format
     )
+    
+    PARSED_IMG_DIR = f"/Volumes/{job_config.catalog}/{job_config.schema}/{job_config.volume}/parsed_images/"
+    # It's good practice to ensure this directory exists, especially if multiple tasks/workers might try to write to it.
+    # However, os.makedirs might fail if run by multiple executors simultaneously without proper checks.
+    # For Spark, it's often better to let Spark handle directory creation or ensure it's created as a setup step.
+    # For local UDF usage where os module is available:
+    try:
+        os.makedirs(PARSED_IMG_DIR, exist_ok=True)
+        logger.info(f"Ensured parsed image directory exists: {PARSED_IMG_DIR}")
+    except OSError as e:
+        logger.warning(f"Could not create parsed image directory {PARSED_IMG_DIR}: {e}. This might be an issue if running in a restricted environment or in parallel without coordination.")
+
+    # Define parser_kwargs based on job_config or other settings
+    # These could also be read from a configuration file or args if they need to be more dynamic
+    parser_kwargs = {
+        "infer_table_structure": True, # Example default
+        "languages": ["eng"],         # Example default
+        "strategy": "hi_res",          # Example default
+        "extract_image_block_types": ["Table", "Image"], # Example default
+        "extract_image_block_output_dir": PARSED_IMG_DIR
+    }
+    # One could add logic here to load parser_kwargs from job_config if defined there
+    # For example: if hasattr(job_config, 'parser_kwargs') and job_config.parser_kwargs:
+    #                 parser_kwargs.update(json.loads(job_config.parser_kwargs))
+
+    try:
+        parser = ParserFactory.get_parser(
+            parser_type=job_config.parser_type, 
+            **parser_kwargs
+        )
+        logger.info(f"Successfully initialized parser: {job_config.parser_type} with kwargs: {parser_kwargs}")
+    except ValueError as e:
+        logger.error(f"Failed to initialize parser: {e}")
+        # Decide if to raise or exit. Raising is usually better for jobs.
+        raise
+    except TypeError as e:
+        logger.error(f"Type error during parser initialization (check kwargs): {e}")
+        raise
 
     run_silver_task(spark)
-
-    logger.info("Processing job completed.")
+    logger.info("Silver streaming task completed.")
 
 
 if __name__ == "__main__":

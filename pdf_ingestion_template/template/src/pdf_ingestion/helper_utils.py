@@ -22,6 +22,7 @@ class JobConfig:
     table_prefix: str
     reset_data: bool
     file_format: str = "pdf"
+    parser_type: str = "unstructured"
 
     @property
     def source_path(self):
@@ -78,6 +79,13 @@ def parse_args():
         required=False,
         default="pdf",
         help="input file format."
+    )
+    parser.add_argument(
+        "--parser_type",
+        type=str,
+        default="unstructured",
+        choices=["unstructured"],
+        help="Type of parser to use for document processing (default: unstructured)",
     )
 
     args = parser.parse_args(sys.argv[1:])
@@ -139,11 +147,14 @@ class DatabricksWorkspaceUtils:
     def get_job_id_by_name(self, workflow_name: str) -> int:
         """
         Looks up the job_id for a Databricks job (workflow) by its name.
-        Raises ValueError if no match is found.
+        The workflow_name should be contained within the actual job name
+        (to handle DAB prefixes). Raises ValueError if no match is found.
 
-        :param workflow_name: Name of the Databricks job
+        :param workflow_name: Name of the Databricks job (can be partial name)
         :return: job_id of the Databricks job
         """
+        # TODO(jas): Look into finding the proper DAB prefix instead of using contains check.
+        # This would make the workflow name matching more precise and avoid potential false matches.
 
         jobs_list = self.get_client().jobs.list(
             expand_tasks=False, limit=100
@@ -152,14 +163,14 @@ class DatabricksWorkspaceUtils:
 
         # Each element in jobs_list.jobs is a "Job" descriptor that includes:
         # job_id, created_time, settings, etc.
-        logger.info(f"Finding large job: {workflow_name}.")
+        logger.info(f"Finding job containing name: {workflow_name}")
         for job_desc in jobs_list:
             # job_desc.settings is a "JobSettings" object with a `.name` attribute
-            if job_desc.settings.name == workflow_name:
-                logger.info(f"Finding large job id: {job_desc.id}.")
+            if workflow_name in job_desc.settings.name:
+                logger.info(f"Found matching job: {job_desc.settings.name} with id: {job_desc.job_id}")
                 return job_desc.job_id
 
-        raise ValueError(f"No job found with the name: {workflow_name}")
+        raise ValueError(f"No job found containing the name: {workflow_name}")
 
     def get_dbutil(self):
         """Get the Databricks DBUtils instance."""
