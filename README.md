@@ -25,7 +25,7 @@ high-performant, scalable and fault-tolerant.
 3. Setup you bundle
 
     ```
-    databricks bundle init pdf_ingestion_tempate
+    databricks bundle init pdf_ingestion_template
     ```
 * Follow the prompts to define your project name
 * The databricks asset bundle job configurations will be auto created

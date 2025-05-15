@@ -22,7 +22,6 @@ class JobConfig:
     table_prefix: str
     reset_data: bool
     file_format: str = "pdf"
-    parser_type: str = "unstructured"
 
     @property
     def source_path(self):
@@ -44,51 +43,49 @@ class JobConfig:
 
 
 def parse_args():
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description="PDF Ingestion Pipeline")
+    """
+    Parse command-line arguments (similar to dbutils.widgets).
+    Returns an argparse.Namespace with all parameters.
+    """
+    parser = argparse.ArgumentParser(
+        description="Ingest raw PDF files into a Bronze table using Databricks Autoloader."
+    )
+
     parser.add_argument(
-        "--catalog",
-        type=str,
-        required=True,
-        help="Catalog name",
+        "--catalog", required=True, help="Name of the Databricks catalog."
     )
     parser.add_argument(
-        "--schema",
-        type=str,
-        required=True,
-        help="Schema name",
+        "--schema", required=True, help="Name of the Databricks schema."
     )
     parser.add_argument(
-        "--volume",
-        type=str,
-        required=True,
-        help="Volume name",
+        "--volume", required=True, help="Name of the volume to read PDF files from."
     )
     parser.add_argument(
         "--checkpoints_volume",
-        type=str,
         required=True,
-        help="Checkpoints volume name",
+        help="Name of the volume for checkpoints.",
     )
     parser.add_argument(
-        "--table_prefix",
-        type=str,
-        required=True,
-        help="Table prefix",
+        "--table_prefix", required=True, help="Prefix for the raw files table."
     )
     parser.add_argument(
         "--reset_data",
-        action="store_true",
-        help="Reset data",
+        default="false",
+        help="Whether to reset data (true/false). Default is 'false'.",
     )
     parser.add_argument(
-        "--parser_type",
-        type=str,
-        default="unstructured",
-        choices=["unstructured", "databricks"],  # Add more parser types as they become available
-        help="Type of parser to use for document processing",
+        "--file_format",
+        required=False,
+        default="pdf",
+        help="input file format."
     )
-    return parser.parse_args()
+
+    args = parser.parse_args(sys.argv[1:])
+
+    # Convert reset_data to a boolean
+    args.reset_data = args.reset_data.lower() == "true"
+
+    return args
 
 
 def retry_on_failure(max_retries=3, delay=1):
@@ -136,6 +133,7 @@ class DatabricksWorkspaceUtils:
 
     def get_client(self):
         """Create a Databricks workspace client."""
+        logger.info("Creating Databricks workspace client.")
         return WorkspaceClient(host=self.hostname, token=self.token)
 
     def get_job_id_by_name(self, workflow_name: str) -> int:
@@ -154,9 +152,11 @@ class DatabricksWorkspaceUtils:
 
         # Each element in jobs_list.jobs is a "Job" descriptor that includes:
         # job_id, created_time, settings, etc.
+        logger.info(f"Finding large job: {workflow_name}.")
         for job_desc in jobs_list:
             # job_desc.settings is a "JobSettings" object with a `.name` attribute
             if job_desc.settings.name == workflow_name:
+                logger.info(f"Finding large job id: {job_desc.id}.")
                 return job_desc.job_id
 
         raise ValueError(f"No job found with the name: {workflow_name}")
@@ -165,6 +165,7 @@ class DatabricksWorkspaceUtils:
         """Get the Databricks DBUtils instance."""
 
         if "local" not in str(self.spark.sparkContext.master):
+            logger.info("Running in a databricks workspace.")
             try:
                 import IPython
 
