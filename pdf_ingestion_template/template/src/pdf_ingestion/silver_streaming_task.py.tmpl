@@ -23,8 +23,8 @@ logger = logging.getLogger("silver_streaming_task")
 logger.setLevel(logging.INFO)
 
 SALTED_PANDAS_UDF_MODE = False
-LARGE_FILE_THRESHOLD = int({{.Values.async_large_file_threshold_in_mb}}) * 1024 * 1024  # MB to bytes
-LARGE_FILE_PROCESSING_WORKFLOW_NAME = "{{.Values.project_name}}_async_large_file_job"
+LARGE_FILE_THRESHOLD = int({{.async_large_file_threshold_in_mb}}) * 1024 * 1024  # MB to bytes
+LARGE_FILE_PROCESSING_WORKFLOW_NAME = "{{.project_name}}_async_large_file_job"
 
 # Global variables, will be initialized in main()
 parser = None
@@ -115,7 +115,7 @@ def submit_offline_job(file_path, silver_target_table):
     """
     # Ensure PARSED_IMG_DIR and other necessary job_config values are accessible or passed
     # For example, the async job might need its own parser_type and parser_kwargs
-    notebook_params = {
+    python_named_params = {
         "file_path": file_path,
         "silver_target_table": silver_target_table,
         "parsed_img_dir": PARSED_IMG_DIR, # Global, ensure it's set
@@ -126,7 +126,7 @@ def submit_offline_job(file_path, silver_target_table):
     try:
         run_response = workspace_utils.get_client().jobs.run_now(
             job_id=job_id,
-            notebook_params=notebook_params
+            python_named_params=python_named_params
         )
         run_id = run_response.run_id
         logger.info(
@@ -150,8 +150,10 @@ def foreach_batch_function_silver(batch_df, batch_id):
     if large_files_list:
         logger.info(f"Batch {batch_id}: Found {len(large_files_list)} large files to process asynchronously.")
         def _submit_offline_job_wrapper(path_str):
+            def __ensure_starts_with_slash(s: str) -> str:
+                return s if s.startswith("/") else "/" + s
             # Assuming submit_offline_job is defined and handles Databricks API calls
-            submit_offline_job(path_str, job_config.parsed_files_table_name)
+            submit_offline_job(__ensure_starts_with_slash(path_str), job_config.parsed_files_table_name)
 
         with ThreadPoolExecutor(max_workers=min(5, os.cpu_count())) as executor: # Max 5 concurrent job submissions
             futures = [executor.submit(_submit_offline_job_wrapper, row["path"].replace("dbfs:/", "")) for row in large_files_list]
@@ -204,6 +206,7 @@ def foreach_batch_function_silver(batch_df, batch_id):
             # Or log a few examples:
             for error_row in error_df.limit(5).collect():
                 logger.warning(f"  Error for file {error_row['original_path']}: {error_row['text']}")
+            error_df.write.mode("append").saveAsTable(f"{job_config.parsed_files_table_name}_file_errors")
 
     batch_df.unpersist() # Unpersist the batch_df
     logger.info(f"Finished processing batch {batch_id}")
@@ -266,7 +269,7 @@ def main():
     global job_config, workspace_utils, parser, PARSED_IMG_DIR
 
     args = parse_args()
-    spark = SparkSession.builder.appName("SilverTask_{{.Values.project_name}}").getOrCreate()
+    spark = SparkSession.builder.appName("SilverTask_{{.project_name}}").getOrCreate()
 
     workspace_utils = DatabricksWorkspaceUtils(spark)
     job_config = JobConfig(
