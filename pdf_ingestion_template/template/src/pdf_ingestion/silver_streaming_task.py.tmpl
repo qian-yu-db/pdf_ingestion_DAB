@@ -193,8 +193,9 @@ def foreach_batch_function_silver(batch_df, batch_id):
             processed_df = (
                 df_small.withColumn("text", process_document_bytes(parser)("content", F.col("path")))
                 .drop("content"))
-            processed_df.write.mode("append").saveAsTable(job_config.parsed_files_table_name)
-            logger.info(f"Batch {batch_id}: Successfully wrote {processed_df.count()} parsed documents.")
+
+        processed_df.write.mode("append").saveAsTable(job_config.parsed_files_table_name)
+        logger.info(f"Batch {batch_id}: Successfully wrote {processed_df.count()} parsed documents.")
 
         log_to_file_errors_table = False
         if log_to_file_errors_table:
