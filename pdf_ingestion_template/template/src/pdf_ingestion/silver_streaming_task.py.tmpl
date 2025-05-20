@@ -192,9 +192,7 @@ def foreach_batch_function_silver(batch_df, batch_id):
             # For unsalted mode, process documents directly
             processed_df = (
                 df_small.withColumn("text", process_document_bytes("content"))
-                .drop("content")
-                .write.mode("append")
-                .saveAsTable(job_config.parsed_files_table_name))
+                .drop("content"))
 
         # Filter out errors and write successes
         success_df = processed_df.filter(~F.col("text").startswith("ERROR:"))
