@@ -4,7 +4,6 @@ import os
 from datetime import datetime
 import logging
 
-from markdownify import markdownify as md
 from pyspark.sql import SparkSession
 from pyspark.sql.types import (
     StructType,
@@ -13,73 +12,90 @@ from pyspark.sql.types import (
     TimestampType,
     LongType,
 )
-from unstructured.partition.pdf import partition_pdf
+
+from .helper_utils import JobConfig
+from .parsers.factory import ParserFactory
+from .parsers.base import FileType
 
 logging.basicConfig()
 logger = logging.getLogger("large_file_async_task")
 logger.setLevel(logging.INFO)
 
 
-def process_single_pdf(pdf_bytes) -> str:
+def get_file_type(file_path: str) -> FileType:
+    """Determines the file type from the file extension."""
+    ext = os.path.splitext(file_path)[1].lower().lstrip('.')
+    try:
+        # Handle image files
+        if ext in ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'tiff', 'webp']:
+            return FileType.IMG
+        # Handle email files
+        if ext in ['eml', 'msg']:
+            return FileType.EMAIL
+        # Handle other supported formats
+        return FileType(ext)
+    except ValueError:
+        supported_formats = ", ".join(f".{ft.value}" for ft in FileType)
+        logger.warning(f"Unsupported file extension: '{ext}' for file {file_path}. Supported: {supported_formats}")
+        raise ValueError(f"Unsupported file extension: '{ext}'. Supported: {supported_formats}")
+
+
+def process_single_document(doc_bytes: bytes, file_type: FileType, parser) -> str:
     """
-    Parses the given PDF byte content using unstructured's `partition_pdf` and
+    Parses the given document byte content using the configured parser and
     returns the combined text (including any table content converted to Markdown).
-    :param pdf_bytes:
-        The raw PDF content in bytes. For example, you could obtain this by:
-            with open("/dbfs/path/to/your.pdf", "rb") as f:
-                pdf_bytes = f.read()
-    :return:
-        The extracted textual content from the PDF, including tables converted to
+
+    Args:
+        doc_bytes: The raw document content in bytes
+        file_type: Type of the document
+        parser: Configured parser instance
+
+    Returns:
+        The extracted textual content from the document, including tables converted to
         Markdown whenever possible.
-
     """
-
-    # Convert the bytes into a BytesIO object for unstructured
-    pdf_io = io.BytesIO(pdf_bytes)
-
-    # 3) Partition (extract) text
-    raw_elements = partition_pdf(
-        file=pdf_io,
-        infer_table_structure=True,
-        lenguages=["eng"],
-        strategy="hi_res",
-        extract_image_block_types=["Table", "Image"],
-        extract_image_block_output_dir=PARSED_IMG_DIR,  # or your chosen location
-    )
-
-    # Build the final text string
-    text_content = ""
-    for section in raw_elements:
-        if section.category == "Table":
-            # If the table has HTML metadata, convert it to Markdown
-            if section.metadata and section.metadata.text_as_html:
-                text_content += "\n" + md(section.metadata.text_as_html) + "\n"
-            else:
-                text_content += " " + section.text
-        else:
-            # Merge typical text blocks
-            text_content += " " + section.text
-
-    return text_content
+    return parser.parse_document(doc_bytes, file_type)
 
 
 def run_async_task(
     spark: SparkSession,
     file_path: str,
+    parser_type: str = "unstructured",
+    parsed_img_dir: str = None,
 ):
-    """Performs the async task of processing a single PDF file and writing the results to a
+    """Performs the async task of processing a single document file and writing the results to a
     Silver table.
 
-    :param spark:
-    :param file_path:
-    :return:
+    Args:
+        spark: SparkSession instance
+        file_path: Path to the document file
+        parser_type: Type of parser to use (default: "unstructured")
+        parsed_img_dir: Directory for parsed images (optional)
     """
+    # Initialize parser with configuration
+    parser_kwargs = {
+        "infer_table_structure": True,
+        "languages": ["eng"],
+        "strategy": "hi_res",
+        "extract_image_block_types": ["Table", "Image"],
+    }
+    if parsed_img_dir:
+        parser_kwargs["extract_image_block_output_dir"] = parsed_img_dir
 
-    # Read the single PDF file as binary
+    try:
+        parser = ParserFactory.get_parser(parser_type=parser_type, **parser_kwargs)
+        logger.info(f"Successfully initialized parser: {parser_type}")
+    except Exception as e:
+        logger.error(f"Failed to initialize parser: {e}")
+        raise
+
+    # Read the document file as binary
     with open(file_path, "rb") as f:
         raw_doc_contents_bytes = f.read()
 
-    content = process_single_pdf(raw_doc_contents_bytes)
+    # Get file type and process
+    file_type = get_file_type(file_path)
+    content = process_single_document(raw_doc_contents_bytes, file_type, parser)
 
     stats = os.stat(file_path)
     file_size = stats.st_size  # in bytes
@@ -104,7 +120,7 @@ def run_async_task(
             mod_time,  # We'll rely on Spark to convert Python datetime to timestamp
             file_size,
             content,
-            "pdf",  # hardcoded for now. TODO: add file type detection
+            file_type.value,  # Use the actual file type from FileType enum
         )
     ]
 
@@ -115,35 +131,42 @@ def run_async_task(
 
 def main():
     """
-    Main entrypoint: parse args, create a SparkSession, run the bronze ingestion.
+    Main entrypoint: parse args, create a SparkSession, run the async processing task.
     """
     parser = argparse.ArgumentParser(
-        description="Async Job to Ingest large raw PDF files append to a Silver table using "
-        "Databricks Autoloader."
+        description="Async Job to process large document files and append to a Silver table."
     )
 
-    parser.add_argument("--file_path", required=True, help="Path to the PDF file.")
+    parser.add_argument("--file_path", required=True, help="Path to the document file.")
     parser.add_argument(
         "--silver_target_table", required=True, help="Path to the Silver table."
     )
     parser.add_argument(
         "--parsed_img_dir", required=True, help="Path to the image files."
     )
+    parser.add_argument(
+        "--parser_type",
+        type=str,
+        default="unstructured",
+        choices=["unstructured"],
+        help="Type of parser to use for document processing (default: unstructured)",
+    )
 
     args = parser.parse_args()
 
-    file_path = args.file_path
-
-    global PARSED_IMG_DIR, silver_target_table
-
-    PARSED_IMG_DIR = args.parsed_img_dir
+    global silver_target_table
     silver_target_table = args.silver_target_table
 
     # In Databricks, spark is usually available automatically.
     # If running locally or in tests, you can create your own SparkSession:
     spark = SparkSession.builder.getOrCreate()
 
-    run_async_task(spark, file_path)
+    run_async_task(
+        spark=spark,
+        file_path=args.file_path,
+        parser_type=args.parser_type,
+        parsed_img_dir=args.parsed_img_dir
+    )
 
     logger.info("Processing job completed.")
 

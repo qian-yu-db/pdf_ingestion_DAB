@@ -100,6 +100,7 @@ class TestParseArgs:
             "test_prefix",
             "--reset_data",
             "true",
+            "unstructured"
         ]
         monkeypatch.setattr(sys, "argv", test_args)
 
