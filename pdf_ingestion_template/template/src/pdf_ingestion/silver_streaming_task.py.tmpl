@@ -191,7 +191,7 @@ def foreach_batch_function_silver(batch_df, batch_id):
         else:
             # For unsalted mode, process documents directly
             processed_df = (
-                df_small.withColumn("text", process_document_bytes(parser)("content"))
+                df_small.withColumn("text", process_document_bytes(parser)("content", F.col("path")))
                 .drop("content"))
 
         # Filter out errors and write successes
