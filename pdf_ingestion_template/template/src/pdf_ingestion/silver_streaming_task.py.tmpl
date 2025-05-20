@@ -193,24 +193,28 @@ def foreach_batch_function_silver(batch_df, batch_id):
             processed_df = (
                 df_small.withColumn("text", process_document_bytes(parser)("content", F.col("path")))
                 .drop("content"))
+            processed_df.write.mode("append").saveAsTable(job_config.parsed_files_table_name)
+            logger.info(f"Batch {batch_id}: Successfully wrote {processed_df.count()} parsed documents.")
 
-        # Filter out errors and write successes
-        success_df = processed_df.filter(~F.col("text").startswith("ERROR:"))
-        if not success_df.isEmpty():
-            success_df.write.mode("append").saveAsTable(job_config.parsed_files_table_name)
-            logger.info(f"Batch {batch_id}: Successfully wrote {success_df.count()} parsed documents.")
+        log_to_file_errors_table = False
+        if log_to_file_errors_table:
+            # Filter out errors and write successes
+            # success_df = processed_df.filter(~F.col("text").startswith("ERROR:"))
+            # if not success_df.isEmpty():
+            #     # success_df.write.mode("append").saveAsTable(job_config.parsed_files_table_name)
+            #     logger.info(f"Batch {batch_id}: Successfully wrote {success_df.count()} parsed documents.")
 
-        # Handle errors (e.g., log or write to an error table)
-        error_df = processed_df.filter(F.col("text").startswith("ERROR:"))
-        if not error_df.isEmpty():
-            error_count = error_df.count()
-            logger.warning(f"Batch {batch_id}: Encountered {error_count} errors during parsing small files.")
-            # For example, writing errors to a specific table or location:
-            # error_df.write.mode("append").saveAsTable(job_config.parsed_files_error_table_name)
-            # Or log a few examples:
-            for error_row in error_df.limit(5).collect():
-                logger.warning(f"  Error for file {error_row['original_path']}: {error_row['text']}")
-            error_df.write.mode("append").saveAsTable(f"{job_config.parsed_files_table_name}_file_errors")
+            # Handle errors (e.g., log or write to an error table)
+            error_df = processed_df.filter(F.col("text").startswith("ERROR:"))
+            if not error_df.isEmpty():
+                error_count = error_df.count()
+                logger.warning(f"Batch {batch_id}: Encountered {error_count} errors during parsing small files.")
+                # For example, writing errors to a specific table or location:
+                # error_df.write.mode("append").saveAsTable(job_config.parsed_files_error_table_name)
+                # Or log a few examples:
+                for error_row in error_df.limit(5).collect():
+                    logger.warning(f"  Error for file {error_row['original_path']}: {error_row['text']}")
+                error_df.write.mode("append").saveAsTable(f"{job_config.parsed_files_table_name}_file_errors")
 
     batch_df.unpersist()  # Unpersist the batch_df
     logger.info(f"Finished processing batch {batch_id}")
