@@ -9,6 +9,7 @@ class FileType(Enum):
     PPTX = "pptx"
     IMG = "img"  # For image files (jpg, png, etc.)
     EMAIL = "email"  # For email files (eml, msg)
+    XLSX = "xlsx"
 
 class BaseParser(ABC):
     """Base interface for document parsers"""
@@ -38,4 +39,4 @@ class BaseParser(ABC):
         Returns:
             List[str]: List of extracted text content
         """
-        pass 
+        pass
