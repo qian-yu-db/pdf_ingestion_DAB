@@ -35,12 +35,12 @@ class JobConfig:
     @property
     def raw_files_table_name(self):
         return (
-            f"{self.catalog}.{self.schema}.{self.table_prefix}_raw_files_foreachbatch"
+            f"{self.catalog}.{self.schema}.{self.table_prefix}_raw_files"
         )
 
     @property
     def parsed_files_table_name(self):
-        return f"{self.catalog}.{self.schema}.{self.table_prefix}_text_from_files_foreachbatch"
+        return f"{self.catalog}.{self.schema}.{self.table_prefix}_text_from_files"
 
 
 def parse_args():
@@ -75,10 +75,7 @@ def parse_args():
         help="Whether to reset data (true/false). Default is 'false'.",
     )
     parser.add_argument(
-        "--file_format",
-        required=False,
-        default="pdf",
-        help="input file format."
+        "--file_format", required=False, default="pdf", help="input file format."
     )
     parser.add_argument(
         "--parser_type",
@@ -167,7 +164,9 @@ class DatabricksWorkspaceUtils:
         for job_desc in jobs_list:
             # job_desc.settings is a "JobSettings" object with a `.name` attribute
             if workflow_name in job_desc.settings.name:
-                logger.info(f"Found matching job: {job_desc.settings.name} with id: {job_desc.job_id}")
+                logger.info(
+                    f"Found matching job: {job_desc.settings.name} with id: {job_desc.job_id}"
+                )
                 return job_desc.job_id
 
         raise ValueError(f"No job found containing the name: {workflow_name}")

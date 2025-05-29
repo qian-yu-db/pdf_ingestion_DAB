@@ -22,9 +22,22 @@ variables:
     {{- else if eq .cloud_provider "azure"}}
     default: Standard_D8ads_v5
     {{ end }}
+  async_node_type_id:
+    description: "async node type id"
+    {{- if eq .cloud_provider "aws"}}
+    default: m5d.4xlarge
+    {{- else if eq .cloud_provider "azure"}}
+    default: Standard_D16ads_v5
+    {{ end }}
   num_workers:
     description: "number of workers"
     default: 40
+  async_num_workers:
+    description: "number of workers for async job"
+    default: 1
+  max_concurrent_async_runs:
+    description: "max number of concurrent async job runs"
+    default: 1
   zone_id:
     description: "AWS zone_id attribute"
     default: us-west-2a

@@ -4,8 +4,11 @@ from dataclasses import asdict
 
 import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
+import fitz  # PyMuPDF
+from pyspark.sql.types import IntegerType
 
 from .helper_utils import DatabricksWorkspaceUtils, JobConfig, parse_args
+from .page_count_util import get_page_count
 
 logging.basicConfig()
 logger = logging.getLogger("bronze_streaming_task")
@@ -45,9 +48,7 @@ def run_bronze_task(
         # We can remove a path using Spark APIs or dbutils:
         checkpoint_remove_path = f"{job_config.checkpoint_path}/{job_config.raw_files_table_name.split('.')[-1]}"
 
-        logger.info(
-            f"Delete checkpoints volume folder {checkpoint_remove_path} ..."
-        )
+        logger.info(f"Delete checkpoints volume folder {checkpoint_remove_path} ...")
         workspace_utils.get_dbutil().fs.rm(checkpoint_remove_path, True)
 
         logger.info(f"Drop table {job_config.raw_files_table_name}...")
@@ -61,9 +62,23 @@ def run_bronze_task(
         .load(job_config.source_path)
     )
 
+    # Register UDF with two arguments
+    get_page_count_udf = F.udf(get_page_count, IntegerType())
+
+    # First extract file type, then get page count with both arguments
+    df_raw_bronze_with_pages = df_raw_bronze.withColumn(
+        "file_type", F.element_at(F.split("path", "\\."), -1)
+    ).withColumn(
+        "page_count", 
+        get_page_count_udf(
+            F.col("content"), 
+            F.col("file_type")
+        )
+    )
+
     # 6) Write stream to the Bronze table
     (
-        df_raw_bronze.withColumn("file_type", F.element_at(F.split("path", "\\."), -1))
+        df_raw_bronze_with_pages
         .writeStream.trigger(availableNow=True)
         .option(
             "checkpointLocation",
@@ -97,7 +112,7 @@ def main():
         checkpoints_volume=args.checkpoints_volume,
         table_prefix=args.table_prefix,
         reset_data=args.reset_data,
-        file_format=args.file_format
+        file_format=args.file_format,
     )
 
     run_bronze_task(spark)

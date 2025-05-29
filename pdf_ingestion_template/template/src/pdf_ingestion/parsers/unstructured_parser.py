@@ -43,7 +43,7 @@ class UnstructuredParser(BaseParser):
             FileType.PPTX: partition_pptx,
             FileType.IMG: partition_image,
             FileType.EMAIL: partition_email,
-            FileType.XLSX: partition_xlsx
+            FileType.XLSX: partition_xlsx,
         }
 
     def parse_document(self, content: bytes, file_type: FileType) -> str:
@@ -69,13 +69,16 @@ class UnstructuredParser(BaseParser):
         # All partition functions accept file=file_obj and additional kwargs
         elements = self.partition_func[file_type](
             file=file_obj,  # Pass as file-like object
-            **self.config  # Pass any additional configuration
+            **self.config,  # Pass any additional configuration
         )
-        logger.info(f"unstructured parser function '{self.partition_func[file_type]}' used for file type {file_type}")
+        logger.info(
+            f"unstructured parser function '{self.partition_func[file_type]}' used for file type {file_type}"
+        )
         return self._process_elements(elements)
 
-    def parse_document_batch(self, contents: List[bytes],
-                             file_types: List[FileType]) -> List[str]:
+    def parse_document_batch(
+        self, contents: List[bytes], file_types: List[FileType]
+    ) -> List[str]:
         """Parse multiple documents in batch.
 
         Args:
@@ -85,8 +88,10 @@ class UnstructuredParser(BaseParser):
         Returns:
             List[str]: List of extracted text content
         """
-        return [self.parse_document(content, file_type)
-                for content, file_type in zip(contents, file_types)]
+        return [
+            self.parse_document(content, file_type)
+            for content, file_type in zip(contents, file_types)
+        ]
 
     def _process_elements(self, elements) -> str:
         """Process parsed elements into text content.

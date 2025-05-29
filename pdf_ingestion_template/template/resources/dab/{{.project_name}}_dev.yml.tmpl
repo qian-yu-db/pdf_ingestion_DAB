@@ -1,8 +1,8 @@
 # The main job for {{.project_name}}
 resources:
   jobs:
-    {{.project_name}}_benchmark:
-      name: {{.project_name}}_benchmark
+    {{.project_name}}_dev:
+      name: {{.project_name}}_dev
       tasks:
         - task_key: Bronze_pdf_file_ingestion
           job_cluster_key: pdf_ingestion_job_cluster
@@ -26,6 +26,8 @@ resources:
         - task_key: Silver_pdf_content_parsing_extraction
           job_cluster_key: pdf_ingestion_job_cluster
           email_notifications: {}
+          depends_on: 
+            - task_key: Bronze_pdf_file_ingestion
           min_retry_interval_millis: 300000
           python_wheel_task:
             package_name: pdf_ingestion
@@ -65,8 +67,8 @@ resources:
               - workspace:
                   destination: ${workspace.root_path}/files/resources/databricks/tesseract_install_init_script.sh
 
-    {{.project_name}}_async_large_file_job_benchmark:
-          name: {{.project_name}}_async_large_file_job
+    {{.project_name}}_async_large_file_job_dev:
+          name: {{.project_name}}_async_large_file_job_dev
           tasks:
             - task_key: Async_Large_File_Task
               job_cluster_key: large_file_job_cluster
@@ -82,9 +84,9 @@ resources:
           job_clusters:
             - job_cluster_key: large_file_job_cluster
               new_cluster:
-                node_type_id: ${var.node_type_id}
+                node_type_id: ${var.async_node_type_id}
                 spark_version: 16.1.x-scala2.12
-                num_workers: 1
+                num_workers: ${var.async_num_workers}
                 {{- if eq .cloud_provider "aws" }}
                 aws_attributes:
                   first_on_demand: 1
@@ -101,5 +103,5 @@ resources:
                   - workspace:
                       destination: ${workspace.root_path}/files/resources/databricks/tesseract_install_init_script.sh
           webhook_notifications: {}
-          max_concurrent_runs: 1
+          max_concurrent_runs: ${var.max_concurrent_async_runs}
           email_notifications: {}

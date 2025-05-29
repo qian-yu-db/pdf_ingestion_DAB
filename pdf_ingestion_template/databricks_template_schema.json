@@ -25,6 +25,14 @@
             "order": 3,
             "minimum": 1,
             "pattern_match_failure_message": "Threshold must be a positive integer."
+        },
+        "async_page_count_threshold_in_num": {
+            "type": "integer",
+            "default": 100,
+            "description": "Threshold (in page count) above which files are processed asynchronously via Databricks Workflow runs. Files with page count smaller than this threshold are processed inline in the streaming pipeline. The default value is",
+            "order": 4,
+            "minimum": 10,
+            "pattern_match_failure_message": "Threshold must be a positive integer."
         }
     },
     "success_message": "Workspace to use (auto-detected, edit in '{{.project_name}}/databricks.yml'): {{workspace_host}}\n\n✨ Your new project has been created!\n\nPlease refer to the README.md file for \"getting started\" instructions.\nSee also the documentation at https://docs.databricks.com/dev-tools/bundles/index.html."

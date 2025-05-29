@@ -11,13 +11,16 @@ dependencies = [
     "pyspark>=3.5.0,<4",
     "markdownify==0.12.1",
     "nltk==3.8.1",
-    "unstructured[local-inference, all-docs]==0.14.4",
+    "unstructured[all-docs]==0.14.4",
     "unstructured-client==0.22.0",
     "databricks-sdk>=0.1.0,<0.2",
     "pdfminer.six==20221105",
     "pyarrow>=19.0.1,<20",
     "numpy<2.0.0",
-    "ipython"
+    "ipython",
+    "pymupdf>=1.26.0",
+    "python-docx==1.1.2",
+    "python-pptx==0.6.22",
 ]
 
 [project.scripts]

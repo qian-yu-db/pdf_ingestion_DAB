@@ -2,14 +2,17 @@ from abc import ABC, abstractmethod
 from enum import Enum
 from typing import List
 
+
 class FileType(Enum):
     """Supported document formats"""
+
     PDF = "pdf"
     DOCX = "docx"
     PPTX = "pptx"
     IMG = "img"  # For image files (jpg, png, etc.)
     EMAIL = "email"  # For email files (eml, msg)
     XLSX = "xlsx"
+
 
 class BaseParser(ABC):
     """Base interface for document parsers"""
@@ -28,8 +31,9 @@ class BaseParser(ABC):
         pass
 
     @abstractmethod
-    def parse_document_batch(self, contents: List[bytes],
-                           file_types: List[FileType]) -> List[str]:
+    def parse_document_batch(
+        self, contents: List[bytes], file_types: List[FileType]
+    ) -> List[str]:
         """Parse multiple documents in batch.
 
         Args:

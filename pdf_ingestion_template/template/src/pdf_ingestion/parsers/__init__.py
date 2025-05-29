@@ -7,4 +7,4 @@ __all__ = [
     "FileType",
     "UnstructuredParser",
     "ParserFactory",
-] 
+]

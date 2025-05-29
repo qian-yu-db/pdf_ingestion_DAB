@@ -24,6 +24,7 @@ logger.setLevel(logging.INFO)
 
 SALTED_PANDAS_UDF_MODE = False
 LARGE_FILE_THRESHOLD = int({{.async_large_file_threshold_in_mb}}) * 1024 * 1024  # MB to bytes
+PAGE_COUNT_THRESHOLD  = int({{.async_page_count_threshold_in_num}}) # page count
 LARGE_FILE_PROCESSING_WORKFLOW_NAME = "{{.project_name}}_async_large_file_job"
 
 
@@ -46,6 +47,14 @@ def get_file_type(file_path: str) -> FileType:
 
 
 def process_document_bytes(parser):
+    """Create a pandas UDF for processing document bytes using the specified parser.
+
+    :param parser: The document parser instance to use for processing
+    :type parser: ParserBase
+    :return: A pandas UDF that processes document contents and returns parsed text
+    :rtype: function
+    """
+
     @F.pandas_udf("string")
     def __process_document_bytes(contents: pd.Series, file_paths: pd.Series) -> pd.Series:
         """Pandas UDF to process a series of document contents using the configured parser."""
@@ -110,9 +119,16 @@ def process_document_bytes_as_array_type(parser):
 
 
 def submit_offline_job(file_path, silver_target_table):
-    """
-    Calls 'run_now' on an already-deployed Workflow (job)
+    """Submit a large file for asynchronous processing via a Databricks workflow. Calls 'run_now' on an already-deployed Workflow (job)
     passing the file_path & file_size as notebook parameters.
+
+    :param file_path: Path to the file to be processed
+    :type file_path: str
+    :param silver_target_table: Name of the target table where processed results will be written
+    :type silver_target_table: str
+    :return: The run ID of the submitted job
+    :rtype: int
+    :raises Exception: If the job submission fails
     """
     # Ensure PARSED_IMG_DIR and other necessary job_config values are accessible or passed
     # For example, the async job might need its own parser_type and parser_kwargs
@@ -140,11 +156,39 @@ def submit_offline_job(file_path, silver_target_table):
 
 
 def foreach_batch_function_silver(batch_df, batch_id):
+    """Process each micro-batch of the streaming data, handling both small and large files.
+
+    This function handles the core processing logic:
+    
+    * Updates thresholds based on statistical calculations
+    * Splits files into small and large based on size and page count thresholds
+    * Processes small files directly and submits large files for async processing
+
+    :param batch_df: The micro-batch DataFrame to process
+    :type batch_df: pyspark.sql.DataFrame
+    :param batch_id: The identifier for this micro-batch
+    :type batch_id: int
+    :return: None
+    
+    .. note::
+        Small files are processed immediately while large files are submitted
+        to a separate workflow for asynchronous processing.
+    """
+
+    global THREE_STDDEV_PAGE_COUNT_THRESHOLD, THREE_STDDEV_SIZE_THRESHOLD
+    global LARGE_FILE_THRESHOLD, PAGE_COUNT_THRESHOLD
+
     logger.info(f"Processing batch {batch_id}; Initial count: {batch_df.count()}")
     batch_df.persist()  # Persist the batch_df to avoid recomputation
 
-    df_small = batch_df.filter(F.col("length") <= LARGE_FILE_THRESHOLD)
-    df_large = batch_df.filter(F.col("length") > LARGE_FILE_THRESHOLD)
+    if THREE_STDDEV_SIZE_THRESHOLD < LARGE_FILE_THRESHOLD:
+        LARGE_FILE_THRESHOLD = THREE_STDDEV_SIZE_THRESHOLD
+
+    if THREE_STDDEV_PAGE_COUNT_THRESHOLD < PAGE_COUNT_THRESHOLD:
+        PAGE_COUNT_THRESHOLD = THREE_STDDEV_PAGE_COUNT_THRESHOLD
+
+    df_small = batch_df.filter((F.col("length") <= LARGE_FILE_THRESHOLD) & (F.col("page_count") <= PAGE_COUNT_THRESHOLD))
+    df_large = batch_df.filter((F.col("length") > LARGE_FILE_THRESHOLD) | (F.col("page_count") > PAGE_COUNT_THRESHOLD))
 
     # Process large files first (asynchronously)
     large_files_list = df_large.select("path").collect()
@@ -224,11 +268,22 @@ def foreach_batch_function_silver(batch_df, batch_id):
 def run_silver_task(
         spark: SparkSession,
 ):
-    """
-    Core logic for creating the Silver table for PDF Processing,
-    optionally resetting data, etc.
+    """Orchestrate the silver layer processing of PDF documents.
 
-    :param spark: SparkSession
+    This function handles the main processing setup:
+    
+    * Sets up the processing environment (catalog, schema, volumes)
+    * Calculates statistical thresholds for file size and page counts
+    * Initiates the streaming process for document processing
+    * Handles data reset if requested
+
+    :param spark: The active Spark session
+    :type spark: pyspark.sql.SparkSession
+    :return: None
+    
+    .. note::
+        This function uses statistical analysis to dynamically adjust
+        processing thresholds based on the data characteristics.
     """
     # Ensure job_config is globally accessible or passed as an argument
     spark.sql(f"USE CATALOG {job_config.catalog};")
@@ -261,6 +316,32 @@ def run_silver_task(
         spark.sql(f"DROP TABLE IF EXISTS {job_config.parsed_files_table_name}")
 
     df_parsed_silver = spark.readStream.table(job_config.raw_files_table_name)
+
+    # Calculate file size statistics
+    df_threshold_cal = spark.table(job_config.raw_files_table_name)
+    file_stats = df_threshold_cal.select(
+        F.mean("length").alias("mean_size"),
+        F.stddev("length").alias("stddev_size"),
+        F.mean("page_count").alias("mean_page_count"),
+        F.stddev("page_count").alias("stddev_page_count")
+    ).collect()[0]
+
+    global THREE_STDDEV_PAGE_COUNT_THRESHOLD, THREE_STDDEV_SIZE_THRESHOLD
+    
+    mean_size = file_stats["mean_size"]
+    stddev_size = file_stats["stddev_size"]
+    mean_page_count = file_stats["mean_page_count"]
+    stddev_page_count = file_stats["stddev_page_count"]
+    THREE_STDDEV_SIZE_THRESHOLD = mean_size + (3 * stddev_size)
+    THREE_STDDEV_PAGE_COUNT_THRESHOLD = mean_page_count + (3 * stddev_page_count)
+    
+    logger.info(f"File size statistics:")
+    logger.info(f"Mean size: {mean_size:.2f} bytes")
+    logger.info(f"Standard deviation size: {stddev_size:.2f} bytes")
+    logger.info(f"Mean page_count: {mean_page_count:.2f} page_count")
+    logger.info(f"Standard deviation page_count: {stddev_page_count:.2f} page_count")
+    logger.info(f"3 standard deviations file size threshold: {THREE_STDDEV_SIZE_THRESHOLD:.2f} bytes")
+    logger.info(f"3 standard deviations page_count threshold: {THREE_STDDEV_PAGE_COUNT_THRESHOLD:.2f} page_count")
 
     (
         df_parsed_silver.writeStream.trigger(availableNow=True)
