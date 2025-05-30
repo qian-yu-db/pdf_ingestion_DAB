@@ -36,7 +36,9 @@ def get_page_count(file_input: Union[str, bytes], file_type: str) -> Optional[in
         elif file_type == 'pptx':
             return _get_pptx_page_count(file_input)
         elif file_type == 'xlsx':
-            return 1
+            return 1 # excel always returns 1 page
+        elif file_type in ['eml', 'msg']:
+            return 1 # email always returns 1 page
         elif file_type in ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'tiff', 'webp']:
             return 1  # Image files always have 1 page
         else:
