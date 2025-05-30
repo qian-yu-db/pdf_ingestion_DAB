@@ -1,0 +1,66 @@
+# This is the configuration for the Databricks Asset Bundle Jas_Test_1.
+
+bundle:
+  name: Jas_Test_1
+
+include:
+  - resources/dab/*.yml
+
+artifacts:
+  default:
+    type: whl
+    build: uv build --wheel
+
+variables:
+  cloud_provider:
+    description: "cloud provider"
+    default: aws
+  node_type_id:
+    description: "node type id"
+    default: m5d.2xlarge
+  num_workers:
+    description: "number of workers"
+    default: 40
+  zone_id:
+    description: "AWS zone_id attribute"
+    default: us-west-2a
+  catalog:
+    description: "unity catalog name"
+    default: my_catalog
+  schema:
+    description: "schema name"
+    default: my_schema
+  volume:
+    description: "source file volume"
+    default: my_volume
+  checkpoints_volume:
+    description: "checkpoints volume"
+    default: checkpoints
+  reset_data:
+    description: "reset all data tables boolean flag"
+    default: "true"
+  table_prefix:
+    description: "output table prefix"
+    default: my_project
+  file_format:
+    description: "input file format (extension)"
+    default: pdf
+
+targets:
+  # The deployment targets. See https://docs.databricks.com/en/dev-tools/bundles/deployment-modes.html
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://e2-demo-field-eng.cloud.databricks.com
+
+  prod:
+    mode: production
+    workspace:
+      host: https://e2-demo-field-eng.cloud.databricks.com
+      root_path: /Shared/.bundle/prod/${bundle.name}
+    run_as:
+      # This runs as jas.bali@databricks.com in production. Alternatively,
+      # a service principal could be used here using service_principal_name
+      user_name: jas.bali@databricks.com
+    

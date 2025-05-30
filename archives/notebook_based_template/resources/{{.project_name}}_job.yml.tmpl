@@ -1,0 +1,94 @@
+# The main job for {{.project_name}}
+resources:
+  jobs:
+    {{.project_name}}_job:
+      name: {{.project_name}}_job
+      tasks:
+        - task_key: Bronze_pdf_file_ingestion
+          job_cluster_key: pdf_ingestion_job_cluster
+          max_retries: 2
+          webhook_notifications: {}
+          run_if: ALL_SUCCESS
+          email_notifications: {}
+          notebook_task:
+            notebook_path: ../src/Bronze-pdf_batch_ingestion_binary_foreachbatch.py
+            source: WORKSPACE
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              volume: ${var.volume}
+              reset_data: ${var.reset_data}
+              checkpoints_volume: ${var.checkpoints_volume}
+              table_prefix: ${var.table_prefix}
+        - task_key: Silver_pdf_content_parsing_extraction
+          job_cluster_key: pdf_ingestion_job_cluster
+          email_notifications: {}
+          min_retry_interval_millis: 300000
+          notebook_task:
+            notebook_path: ../src/Silver-pdf_batch_ingestion_binary_foreachbatch.py
+            source: WORKSPACE
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              volume: ${var.volume}
+              reset_data: ${var.reset_data}
+              checkpoints_volume: ${var.checkpoints_volume}
+              table_prefix: ${var.table_prefix}
+          webhook_notifications: {}
+          max_retries: 2
+          run_if: ALL_SUCCESS
+      job_clusters:
+        - job_cluster_key: pdf_ingestion_job_cluster
+          new_cluster:
+            node_type_id: ${var.node_type_id}
+            spark_version: 16.1.x-scala2.12
+            num_workers: ${var.num_workers}
+            {{ if eq .cloud_provider "aws" }}
+            aws_attributes:
+              first_on_demand: 1
+              zone_id: ${var.zone_id}
+              availability: ON_DEMAND
+            {{ else if eq .cloud_provider "azure" }}
+            azure_attributes:
+              first_on_demand: 1
+              availability: ON_DEMAND
+            {{ end }}
+            runtime_engine: PHOTON
+            data_security_mode: SINGLE_USER
+      webhook_notifications: {}
+      max_concurrent_runs: 1
+      email_notifications: {}
+
+    {{.project_name}}_async_large_file_job:
+          name: {{.project_name}}_async_large_file_job
+          tasks:
+            - task_key: Async_Large_File_Task
+              job_cluster_key: large_file_job_cluster
+              max_retries: 3
+              webhook_notifications: {}
+              run_if: ALL_SUCCESS
+              email_notifications: {}
+              notebook_task:
+                notebook_path: ../src/Async_Large_File_Processing.py
+                source: WORKSPACE
+          job_clusters:
+            - job_cluster_key: large_file_job_cluster
+              new_cluster:
+                node_type_id: ${var.node_type_id}
+                spark_version: 16.1.x-scala2.12
+                num_workers: 1
+                {{ if eq .cloud_provider "aws" }}
+                aws_attributes:
+                  first_on_demand: 1
+                  zone_id: ${var.zone_id}
+                  availability: ON_DEMAND
+                {{ else if eq .cloud_provider "azure" }}
+                azure_attributes:
+                  first_on_demand: 1
+                  availability: ON_DEMAND
+                {{ end }}
+                runtime_engine: PHOTON
+                data_security_mode: SINGLE_USER
+          webhook_notifications: {}
+          max_concurrent_runs: 1
+          email_notifications: {}
