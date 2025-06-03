@@ -62,6 +62,9 @@ variables:
   file_format:
     description: "input file format (extension)"
     default: pdf
+  strategy:
+    description: "Unstructured OSS setting: 'auto', 'hi_res', 'ocr_only'"
+    default: 'auto'
 
 targets:
   # The deployment targets. See https://docs.databricks.com/en/dev-tools/bundles/deployment-modes.html

@@ -21,6 +21,8 @@ resources:
               checkpoints_volume: ${var.checkpoints_volume}
               table_prefix: ${var.table_prefix}
               file_format: ${var.file_format}
+              strategy: ${var.strategy}
+              target: ${bundle.target}
           libraries:
             - whl: ../../dist/*.whl
         - task_key: Silver_pdf_content_parsing_extraction
@@ -40,6 +42,8 @@ resources:
               checkpoints_volume: ${var.checkpoints_volume}
               table_prefix: ${var.table_prefix}
               file_format: ${var.file_format}
+              strategy: ${var.strategy}
+              target: ${bundle.target}
           libraries:
             - whl: ../../dist/*.whl
           webhook_notifications: {}
@@ -49,7 +53,7 @@ resources:
         - job_cluster_key: pdf_ingestion_job_cluster
           new_cluster:
             node_type_id: ${var.node_type_id}
-            spark_version: 16.1.x-scala2.12
+            spark_version: 16.4.x-scala2.13
             num_workers: ${var.num_workers}
             {{- if eq .cloud_provider "aws" }}
             aws_attributes:
@@ -70,8 +74,8 @@ resources:
       max_concurrent_runs: 1
       email_notifications: {}
 
-    {{.project_name}}_async_large_file_job:
-          name: {{.project_name}}_async_large_file_job
+    {{.project_name}}_async_large_file_job_prod:
+          name: {{.project_name}}_async_large_file_job_prod
           tasks:
             - task_key: Async_Large_File_Task
               job_cluster_key: large_file_job_cluster
@@ -88,7 +92,7 @@ resources:
             - job_cluster_key: large_file_job_cluster
               new_cluster:
                 node_type_id: ${var.async_node_type_id}
-                spark_version: 16.1.x-scala2.12
+                spark_version: 16.4.x-scala2.13
                 num_workers: ${var.async_num_workers}
                 {{- if eq .cloud_provider "aws" }}
                 aws_attributes:

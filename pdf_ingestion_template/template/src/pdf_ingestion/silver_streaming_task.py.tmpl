@@ -14,6 +14,7 @@ from .helper_utils import (
     JobConfig,
     parse_args,
     retry_on_failure,
+    write_to_table
 )
 from .parsers.factory import ParserFactory
 from .parsers.base import FileType
@@ -25,7 +26,7 @@ logger.setLevel(logging.INFO)
 SALTED_PANDAS_UDF_MODE = False
 LARGE_FILE_THRESHOLD = int({{.async_large_file_threshold_in_mb}}) * 1024 * 1024  # MB to bytes
 PAGE_COUNT_THRESHOLD  = int({{.async_page_count_threshold_in_num}}) # page count
-LARGE_FILE_PROCESSING_WORKFLOW_NAME = "{{.project_name}}_async_large_file_job"
+LARGE_FILE_PROCESSING_WORKFLOW_NAME = "{{.project_name}}_async_large_file_job_"
 
 
 def get_file_type(file_path: str) -> FileType:
@@ -139,7 +140,10 @@ def submit_offline_job(file_path, silver_target_table):
         "parser_type": job_config.parser_type,  # Pass parser type
         # Potentially pass other parser_kwargs if the async job initializes its own parser
     }
-    job_id = workspace_utils.get_job_id_by_name(LARGE_FILE_PROCESSING_WORKFLOW_NAME)
+
+    global LARGE_FILE_PROCESSING_WORKFLOW_NAME 
+
+    job_id = workspace_utils.get_job_id_by_name(LARGE_FILE_PROCESSING_WORKFLOW_NAME + job_config.target)
     try:
         run_response = workspace_utils.get_client().jobs.run_now(
             job_id=job_id,
@@ -238,7 +242,7 @@ def foreach_batch_function_silver(batch_df, batch_id):
                 df_small.withColumn("text", process_document_bytes(parser)("content", F.col("path")))
                 .drop("content"))
 
-        processed_df.write.mode("append").saveAsTable(job_config.parsed_files_table_name)
+        write_to_table(processed_df, job_config.parsed_files_table_name)
         logger.info(f"Batch {batch_id}: Successfully wrote {processed_df.count()} parsed documents.")
 
         log_to_file_errors_table = False
@@ -290,6 +294,7 @@ def run_silver_task(
     spark.sql(f"USE SCHEMA {job_config.schema};")
     spark.sql(f"CREATE VOLUME IF NOT EXISTS {job_config.checkpoints_volume}")
 
+    logger.info(f"job target: {job_config.target}")
     logger.info(f"Use Catalog: {job_config.catalog}")
     logger.info(f"Use Schema: {job_config.schema}")
     logger.info(f"Use Volume: {job_config.volume}")
@@ -297,6 +302,7 @@ def run_silver_task(
     logger.info(f"Use Table Prefix: {job_config.table_prefix}")
     logger.info(f"Reset Data: {job_config.reset_data}")
     logger.info(f"Parser Type: {job_config.parser_type}")  # Log parser type
+    logger.info(f"Parser Strategy (if using unstructured OSS parser): {job_config.strategy}")
 
     logger.info("-------------------")
     logger.info("Job Configuration")
@@ -370,7 +376,9 @@ def main():
         table_prefix=args.table_prefix,
         reset_data=args.reset_data,
         parser_type=args.parser_type,
-        file_format=args.file_format
+        file_format=args.file_format,
+        strategy=args.strategy,
+        target=args.target
     )
 
     PARSED_IMG_DIR = f"/Volumes/{job_config.catalog}/{job_config.schema}/{job_config.volume}/parsed_images/"
@@ -390,7 +398,7 @@ def main():
     parser_kwargs = {
         "infer_table_structure": True,  # Example default
         "languages": ["eng"],  # Example default
-        "strategy": "hi_res",  # Example default
+        "strategy": job_config.strategy,  # Example default
         "extract_image_block_types": ["Table", "Image"],  # Example default
         "extract_image_block_output_dir": PARSED_IMG_DIR
     }
