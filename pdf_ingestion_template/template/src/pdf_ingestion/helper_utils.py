@@ -7,6 +7,7 @@ import logging
 
 from databricks.sdk import WorkspaceClient
 from pyspark.sql import SparkSession
+from pyspark.sql.dataframe import DataFrame
 
 logging.basicConfig()
 logger = logging.getLogger("helper_utils")
@@ -22,6 +23,8 @@ class JobConfig:
     table_prefix: str
     reset_data: bool
     file_format: str = "pdf"
+    strategy: str = "auto"
+    target: str = "dev"
     parser_type: str = "unstructured"
 
     @property
@@ -78,6 +81,20 @@ def parse_args():
         "--file_format", required=False, default="pdf", help="input file format."
     )
     parser.add_argument(
+        "--strategy",
+        type=str,
+        default="auto",
+        choices=["auto", "hi_res", "ocr_only"],
+        help="Strategy to use for unstructured OSS document processing (default: auto)",
+    )
+    parser.add_argument(
+        "--target",
+        type=str,
+        default="dev",
+        choices=["dev", "prod"],
+        help="Target environment for the job (default: dev)",
+    )
+    parser.add_argument(
         "--parser_type",
         type=str,
         default="unstructured",
@@ -121,6 +138,16 @@ def retry_on_failure(max_retries=3, delay=1):
         return wrapper
 
     return decorator
+
+
+@retry_on_failure(max_retries=3, delay=2)
+def write_to_table(df: DataFrame, table_name: str):
+    """Write a DataFrame to a table.
+    Args:
+        df: DataFrame to write
+        table_name: Name of the table to write to
+    """
+    df.write.mode("append").saveAsTable(table_name)
 
 
 class DatabricksWorkspaceUtils:

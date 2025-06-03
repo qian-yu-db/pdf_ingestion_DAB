@@ -31,6 +31,7 @@ def run_bronze_task(
     # 2) Create volume if not exists (Databricks UC command)
     spark.sql(f"CREATE VOLUME IF NOT EXISTS {job_config.checkpoints_volume}")
 
+    logger.info(f"Job Target: {job_config.target}")
     logger.info(f"Use Unity Catalog: {job_config.catalog}")
     logger.info(f"Use Schema: {job_config.schema}")
     logger.info(f"Use Volume: {job_config.volume}")
@@ -113,6 +114,8 @@ def main():
         table_prefix=args.table_prefix,
         reset_data=args.reset_data,
         file_format=args.file_format,
+        strategy=args.strategy,
+        target=args.target,
     )
 
     run_bronze_task(spark)

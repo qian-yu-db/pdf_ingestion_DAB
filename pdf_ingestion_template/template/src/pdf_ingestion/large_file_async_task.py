@@ -14,7 +14,7 @@ from pyspark.sql.types import (
     IntegerType,
 )
 
-from .helper_utils import JobConfig
+from .helper_utils import JobConfig, retry_on_failure, write_to_table
 from .parsers.factory import ParserFactory
 from .parsers.base import FileType
 from .page_count_util import get_page_count
@@ -147,7 +147,7 @@ def run_async_task(
 
     silver_df = spark.createDataFrame(processed_file_data, schema=silver_table_schema)
 
-    silver_df.write.mode("append").saveAsTable(silver_target_table)
+    write_to_table(silver_df, silver_target_table)
 
 
 def main():
