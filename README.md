@@ -2,7 +2,7 @@
 
 ## Architecture
 
-![Architecture](imgs/unstructured_ingestion_arch.png)
+![Architecture](imgs/unstructured_data_ingestion_arch.png)
 
 This project enable databricks users to ingest large number of unstructured files (e.g. PDF, Docx, PPTx, etc) from a Databricks Unity Catalog volume into a Databricks Delta table. The project is designed to be 
 high-performant, scalable and fault-tolerant.
