@@ -83,7 +83,7 @@ def run_bronze_task(
                   modificationTime TIMESTAMP,
                   length BIGINT,
                   page_count INT,
-                  text STRING,
+                  markdown_content STRING,
                   file_type STRING)
                   USING delta
                   TBLPROPERTIES (

@@ -40,8 +40,8 @@ def process_document_bytes(parser):
     :rtype: function
     """
 
-    logger.info(f"parser name: {parser.parser_name}")
     if parser.parser_name == "unstructured":
+        logger.info(f"Parse use {parser.parser_name}")
         @F.pandas_udf("string")
         def __process_document_bytes(contents: pd.Series, file_paths: pd.Series) -> pd.Series:
             """Pandas UDF to process a series of document contents using the configured parser."""
@@ -68,6 +68,7 @@ def process_document_bytes(parser):
 
         return __process_document_bytes
     elif parser.parser_name == "databricks_ai_parse":
+        logger.info(f"Parse use {parser.parser_name}")
         @F.udf("string") 
         def __create_ai_parse_expr(file_ext: str) -> str:
             file_type = get_file_type_from_ext(file_ext)

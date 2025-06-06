@@ -150,6 +150,8 @@ def write_to_table(df: DataFrame, table_name: str):
         df: DataFrame to write
         table_name: Name of the table to write to
     """
+    # rename column text to markdown_content
+    df = df.withColumnRenamed("text", "markdown_content")
     df.write.mode("append").saveAsTable(table_name)
 
 
