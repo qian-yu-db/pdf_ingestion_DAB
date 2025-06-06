@@ -1,5 +1,7 @@
 from typing import Dict, Type
+
 from .base import BaseParser
+from .databricks_ai_parse_parser import DatabricksAIParseParser
 from .unstructured_parser import UnstructuredParser
 
 
@@ -7,16 +9,16 @@ class ParserFactory:
     """Factory for creating parser instances"""
 
     _parsers: Dict[str, Type[BaseParser]] = {
-        "unstructured": UnstructuredParser
-        # Future parsers like DatabricksAIParser can be registered here
+        "unstructured": UnstructuredParser,
+        "databricks_ai_parse": DatabricksAIParseParser,
     }
 
     @classmethod
-    def get_parser(cls, parser_type: str, **kwargs) -> BaseParser:
+    def get_parser(cls, parser_name: str, **kwargs) -> BaseParser:
         """Get a parser instance.
 
         Args:
-            parser_type: Type of parser to create
+            parser_name: Type of parser to create
             **kwargs: Parser configuration options
 
         Returns:
@@ -25,12 +27,12 @@ class ParserFactory:
         Raises:
             ValueError: If parser type is not supported
         """
-        parser_class = cls._parsers.get(parser_type)
+        parser_class = cls._parsers.get(parser_name)
         if not parser_class:
             supported = ", ".join(cls._parsers.keys())
             raise ValueError(
-                f"Unsupported parser type: '{parser_type}'. "
-                f"Supported types are: {supported}"
+                f"Unsupported parser: '{parser_name}'. "
+                f"Supported parsers are: {supported}"
             )
 
         return parser_class(**kwargs)

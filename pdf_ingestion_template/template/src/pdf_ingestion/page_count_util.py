@@ -8,12 +8,14 @@ This module provides functions to get page counts from various document types:
 
 import io
 import logging
-from typing import Union, Optional
+from typing import Optional, Union
+
 import fitz  # PyMuPDF
 from docx import Document
 from pptx import Presentation
 
 logger = logging.getLogger("page_count_util")
+
 
 def get_page_count(file_input: Union[str, bytes], file_type: str) -> Optional[int]:
     """Get the page count from a document.
@@ -27,25 +29,26 @@ def get_page_count(file_input: Union[str, bytes], file_type: str) -> Optional[in
     :raises ValueError: If file_type is not supported
     """
     file_type = file_type.lower()
-    
+
     try:
-        if file_type == 'pdf':
+        if file_type == "pdf":
             return _get_pdf_page_count(file_input)
-        elif file_type == 'docx':
+        elif file_type == "docx":
             return _get_docx_page_count(file_input)
-        elif file_type == 'pptx':
+        elif file_type == "pptx":
             return _get_pptx_page_count(file_input)
-        elif file_type == 'xlsx':
-            return 1 # excel always returns 1 page
-        elif file_type in ['eml', 'msg']:
-            return 1 # email always returns 1 page
-        elif file_type in ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'tiff', 'webp']:
+        elif file_type == "xlsx":
+            return 1  # excel always returns 1 page
+        elif file_type in ["eml", "msg"]:
+            return 1  # email always returns 1 page
+        elif file_type in ["jpg", "jpeg", "png", "gif", "bmp", "tiff", "webp"]:
             return 1  # Image files always have 1 page
         else:
             raise ValueError(f"Unsupported file type: {file_type}")
     except Exception as e:
         logger.error(f"Error getting page count for {file_type} file: {str(e)}")
         return None
+
 
 def _get_pdf_page_count(file_input: Union[str, bytes]) -> int:
     """Get page count from a PDF file.
@@ -61,11 +64,12 @@ def _get_pdf_page_count(file_input: Union[str, bytes]) -> int:
     else:
         # Input is bytes
         doc = fitz.open(stream=file_input, filetype="pdf")
-    
+
     try:
         return doc.page_count
     finally:
         doc.close()
+
 
 def _get_docx_page_count(file_input: Union[str, bytes]) -> int:
     """Get page count from a DOCX file.
@@ -79,9 +83,10 @@ def _get_docx_page_count(file_input: Union[str, bytes]) -> int:
         doc = Document(file_input)
     else:
         doc = Document(io.BytesIO(file_input))
-    
+
     # This is an approximation as actual page count depends on formatting
     return len(doc.sections)
+
 
 def _get_pptx_page_count(file_input: Union[str, bytes]) -> int:
     """Get page count from a PPTX file.
@@ -95,5 +100,5 @@ def _get_pptx_page_count(file_input: Union[str, bytes]) -> int:
         prs = Presentation(file_input)
     else:
         prs = Presentation(io.BytesIO(file_input))
-    
-    return len(prs.slides) 
+
+    return len(prs.slides)

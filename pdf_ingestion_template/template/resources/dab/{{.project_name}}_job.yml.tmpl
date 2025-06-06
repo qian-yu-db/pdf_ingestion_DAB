@@ -21,6 +21,7 @@ resources:
               checkpoints_volume: ${var.checkpoints_volume}
               table_prefix: ${var.table_prefix}
               file_format: ${var.file_format}
+              parser: ${var.parser_name}
               strategy: ${var.strategy}
               target: ${bundle.target}
           libraries:
@@ -42,6 +43,7 @@ resources:
               checkpoints_volume: ${var.checkpoints_volume}
               table_prefix: ${var.table_prefix}
               file_format: ${var.file_format}
+              parser: ${var.parser_name}
               strategy: ${var.strategy}
               target: ${bundle.target}
           libraries:
