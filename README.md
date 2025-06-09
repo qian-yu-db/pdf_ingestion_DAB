@@ -90,6 +90,10 @@ high-performant, scalable and fault-tolerant.
 
 ### Databricks Job Variables
 
+User can customize the following variables in the `databricks.yml` after bundle initialization 
+or set with databricks CLI. These variables are used to configure the job and can be set to match 
+your specific environment and requirements.
+
 | Variable | Description                                                           | Default Value |
 |----------|-----------------------------------------------------------------------|--------------|
 | cloud_provider | cloud provider                                                        | aws          |
@@ -111,6 +115,8 @@ high-performant, scalable and fault-tolerant.
 
 ### Parsers
 
+The currently supported parsers, file format
+
 |                      | Databricks AI Parse                 | Unstructured OSS Parser (`auto` strategy)                                | Unstructured OSS Parser (`hi_res` strategy) | 
 |----------------------|-------------------------------------|--------------------------------------------------------------------------|---------------------------------------------|
 | Supported File Types | `pdf`, `jpg`, `jpeg`, `png`         | `pdf`, `pptx`, `docx`, `xlsx`, `eml`, `msg`                              | `pdf`, `pptx`, `docx`, `xlsx`, `eml`, `msg` |
@@ -121,15 +127,17 @@ high-performant, scalable and fault-tolerant.
 * The open source Unstructured API uses Yolox object detection model for `hi_res` strategy and `auto` strategy (dynamically determined). The Yolox model is hosted at huggingface hub. Depending on the time of the day and traffic condition, user may experience 429 error due to the rate limit from huggingface
 * AI parse is currently in Private Preview, please reach out to your Databricks Account Team to enable access
 
-## Roadmap
+## Comming Soon
 
 * Memory management
 * Map-reduce page splits option for large files
-* Declaritive Unstructured Document Processing
-  * [Delver Project](https://github.com/FMurray/delver)
+* Declaritive Document Processing
 
 
 ## Reference:
 
 - [Databricks CLI](https://docs.databricks.com/aws/en/dev-tools/cli/)
 - [Databricks Asset Bundle Tutorial](https://docs.databricks.com/aws/en/dev-tools/bundles/tutorials)
+- [Spark Structured Streaming](https://docs.databricks.com/aws/en/structured-streaming/concepts)
+- Databricks AI Parse
+- [Unstructured OSS Parser](https://docs.unstructured.io/open-source/core-functionality/partitioning)
