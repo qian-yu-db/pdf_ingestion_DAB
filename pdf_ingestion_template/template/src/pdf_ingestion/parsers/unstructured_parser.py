@@ -1,17 +1,18 @@
 import io
-from typing import List, Dict, Any
-from markdownify import markdownify as md
 import logging
+from typing import Any, Dict, List
+
+from markdownify import markdownify as md
+from unstructured.partition.docx import partition_docx
+from unstructured.partition.email import partition_email
+from unstructured.partition.image import partition_image
 
 # All partition functions accept either:
 # - file: file-like object (BytesIO, file handle, etc.)
 # - filename: str path to file
 # We use file=BytesIO(content) to handle in-memory bytes
 from unstructured.partition.pdf import partition_pdf
-from unstructured.partition.docx import partition_docx
 from unstructured.partition.pptx import partition_pptx
-from unstructured.partition.image import partition_image
-from unstructured.partition.email import partition_email
 from unstructured.partition.xlsx import partition_xlsx
 
 from .base import BaseParser, FileType
@@ -22,19 +23,37 @@ logger.setLevel(logging.INFO)
 
 
 class UnstructuredParser(BaseParser):
-    """Parser implementation using the unstructured library"""
+    """Parser implementation using the unstructured library.
+    
+    This parser uses the unstructured library to extract text and tables
+    from various document formats including PDF, DOCX, PPTX, images, 
+    emails, and spreadsheets.
+    """
+
+    @property
+    def parser_name(self) -> str:
+        """Return the parser name identifier.
+        
+        :returns: The parser name identifier
+        :rtype: str
+        """
+        return "unstructured"
 
     def __init__(self, **kwargs):
         """Initialize parser with configuration options.
 
-        Args:
-            **kwargs: Parser configuration options that will be passed to partition functions.
-                     Common options include:
-                     - infer_table_structure: bool
-                     - languages: List[str]
-                     - strategy: str
-                     - extract_image_block_types: List[str]
-                     - extract_image_block_output_dir: str
+        :param kwargs: Parser configuration options that will be passed to partition functions
+        :type kwargs: dict
+        :keyword infer_table_structure: Whether to infer table structure
+        :type infer_table_structure: bool
+        :keyword languages: List of languages for OCR
+        :type languages: List[str]
+        :keyword strategy: Processing strategy ('auto', 'hi_res', 'ocr_only')
+        :type strategy: str
+        :keyword extract_image_block_types: Types of blocks to extract as images
+        :type extract_image_block_types: List[str]
+        :keyword extract_image_block_output_dir: Directory for extracted images
+        :type extract_image_block_output_dir: str
         """
         self.config = kwargs
         self.partition_func = {
@@ -46,20 +65,33 @@ class UnstructuredParser(BaseParser):
             FileType.XLSX: partition_xlsx,
         }
 
-    def parse_document(self, content: bytes, file_type: FileType) -> str:
+    def parse_document(self, **kwargs) -> str:
         """Parse a single document using unstructured library.
 
-        Args:
-            content: Document content as bytes
-            file_type: Type of the document
-
-        Returns:
-            str: Extracted text content
-
-        Note:
-            All partition functions accept either a file-like object or filename.
-            We use BytesIO to create a file-like object from the bytes content.
+        :param kwargs: Parser-specific keyword arguments
+        :type kwargs: dict
+        :keyword content: Document content as bytes
+        :type content: bytes
+        :keyword file_type: Type of the document
+        :type file_type: FileType
+        :returns: Extracted text content from the document
+        :rtype: str
+        :raises ValueError: If file_type is not supported or required kwargs are missing
+        :raises KeyError: If required parameters are missing from kwargs
+        
+        .. note::
+           All partition functions accept either a file-like object or filename.
+           We use BytesIO to create a file-like object from the bytes content.
         """
+        # Extract required parameters from kwargs
+        content = kwargs.get('content')
+        file_type = kwargs.get('file_type')
+        
+        if content is None:
+            raise KeyError("'content' is required in kwargs")
+        if file_type is None:
+            raise KeyError("'file_type' is required in kwargs")
+            
         if file_type not in self.partition_func:
             raise ValueError(f"Unsupported file type: {file_type}")
 
@@ -81,12 +113,16 @@ class UnstructuredParser(BaseParser):
     ) -> List[str]:
         """Parse multiple documents in batch.
 
-        Args:
-            contents: List of document contents as bytes
-            file_types: List of document types
+        This implementation overrides the default to provide the same
+        individual processing behavior but with proper kwargs handling.
 
-        Returns:
-            List[str]: List of extracted text content
+        :param contents: List of document contents as bytes
+        :type contents: List[bytes]
+        :param file_types: List of document types corresponding to contents
+        :type file_types: List[FileType]
+        :returns: List of extracted text content from each document
+        :rtype: List[str]
+        :raises ValueError: If contents and file_types lists have different lengths
         """
         return [
             self.parse_document(content, file_type)
@@ -96,11 +132,14 @@ class UnstructuredParser(BaseParser):
     def _process_elements(self, elements) -> str:
         """Process parsed elements into text content.
 
-        Args:
-            elements: List of parsed elements
-
-        Returns:
-            str: Processed text content
+        :param elements: List of parsed elements from unstructured
+        :type elements: List
+        :returns: Processed text content with tables converted to markdown
+        :rtype: str
+        
+        .. note::
+           Tables are converted to markdown format using markdownify.
+           Other elements are concatenated as plain text.
         """
         text_content = ""
         for element in elements:

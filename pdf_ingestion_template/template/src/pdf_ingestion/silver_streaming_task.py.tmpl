@@ -14,7 +14,9 @@ from .helper_utils import (
     JobConfig,
     parse_args,
     retry_on_failure,
-    write_to_table
+    write_to_table,
+    get_file_type_from_path,
+    get_file_type_from_ext
 )
 from .parsers.factory import ParserFactory
 from .parsers.base import FileType
@@ -29,24 +31,6 @@ PAGE_COUNT_THRESHOLD  = int({{.async_page_count_threshold_in_num}}) # page count
 LARGE_FILE_PROCESSING_WORKFLOW_NAME = "{{.project_name}}_async_large_file_job_"
 
 
-def get_file_type(file_path: str) -> FileType:
-    """Determines the file type from the file extension."""
-    ext = os.path.splitext(file_path)[1].lower().lstrip('.')
-    try:
-        # Handle image files
-        if ext in ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'tiff', 'webp']:
-            return FileType.IMG
-        # Handle email files
-        if ext in ['eml', 'msg']:
-            return FileType.EMAIL
-        # Handle other supported formats
-        return FileType(ext)
-    except ValueError:
-        supported_formats = ", ".join(f".{ft.value}" for ft in FileType)
-        logger.warning(f"Unsupported file extension: '{ext}' for file {file_path}. Supported: {supported_formats}")
-        raise ValueError(f"Unsupported file extension: '{ext}'. Supported: {supported_formats}")
-
-
 def process_document_bytes(parser):
     """Create a pandas UDF for processing document bytes using the specified parser.
 
@@ -56,32 +40,44 @@ def process_document_bytes(parser):
     :rtype: function
     """
 
-    @F.pandas_udf("string")
-    def __process_document_bytes(contents: pd.Series, file_paths: pd.Series) -> pd.Series:
-        """Pandas UDF to process a series of document contents using the configured parser."""
+    if parser.parser_name == "unstructured":
+        logger.info(f"Parse use {parser.parser_name}")
+        @F.pandas_udf("string")
+        def __process_document_bytes(contents: pd.Series, file_paths: pd.Series) -> pd.Series:
+            """Pandas UDF to process a series of document contents using the configured parser."""
 
-        @retry_on_failure(max_retries=3, delay=2)
-        def perform_partition_on_single_doc(content_bytes, path_str):
-            if content_bytes is None:
-                logger.warning(f"Skipping null content for file: {path_str}")
-                return "ERROR: Null content"
-            try:
-                file_type = get_file_type(path_str)
-                return parser.parse_document(content_bytes, file_type)
-            except Exception as e:
-                logger.error(f"Failed to parse document {path_str}: {e}")
-                return f"ERROR: {str(e)}"
+            @retry_on_failure(max_retries=3, delay=2)
+            def perform_partition_on_single_doc(content_bytes, path_str):
+                if content_bytes is None:
+                    logger.warning(f"Skipping null content for file: {path_str}")
+                    return "ERROR: Null content"
+                try:
+                    file_type = get_file_type_from_path(path_str)
+                    return parser.parse_document(content=content_bytes, file_type=file_type)
+                except Exception as e:
+                    logger.error(f"Failed to parse document {path_str}: {e}")
+                    return f"ERROR: {str(e)}"
 
-        worker_cpu_scale_factor = 2
-        max_workers = min(8, os.cpu_count() * worker_cpu_scale_factor)
+            worker_cpu_scale_factor = 2
+            max_workers = min(8, os.cpu_count() * worker_cpu_scale_factor)
 
-        results = []
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            results = list(executor.map(perform_partition_on_single_doc, contents, file_paths))
-        return pd.Series(results)
+            results = []
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                results = list(executor.map(perform_partition_on_single_doc, contents, file_paths))
+            return pd.Series(results)
 
-    return __process_document_bytes
+        return __process_document_bytes
+    elif parser.parser_name == "databricks_ai_parse":
+        logger.info(f"Parse use {parser.parser_name}")
+        @F.udf("string") 
+        def __create_ai_parse_expr(file_ext: str) -> str:
+            file_type = get_file_type_from_ext(file_ext)
+            logger.info(f"parse file type: {file_type}")
+            return parser.parse_document(file_type=file_type)
 
+        return __create_ai_parse_expr
+    else:
+        raise ValueError(f"Unsupported parser name: {parser_name}")
 
 def process_document_bytes_as_array_type(parser):
     @F.pandas_udf(ArrayType(StringType()))
@@ -108,8 +104,8 @@ def process_document_bytes_as_array_type(parser):
                     parsed_texts_for_batch.append("ERROR: Null content")
                     continue
                 try:
-                    file_type = get_file_type(path_str)
-                    parsed_texts_for_batch.append(parser.parse_document(content_bytes, file_type))
+                    file_type = get_file_type_from_path(path_str)
+                    parsed_texts_for_batch.append(parser.parse_document(content=content_bytes, file_type=file_type))
                 except Exception as e:
                     logger.error(f"Failed to parse document {path_str} in batch: {e}")
                     parsed_texts_for_batch.append(f"ERROR: {str(e)}")
@@ -132,12 +128,12 @@ def submit_offline_job(file_path, silver_target_table):
     :raises Exception: If the job submission fails
     """
     # Ensure PARSED_IMG_DIR and other necessary job_config values are accessible or passed
-    # For example, the async job might need its own parser_type and parser_kwargs
+    # For example, the async job might need its own parser_name and parser_kwargs
     python_named_params = {
         "file_path": file_path,
         "silver_target_table": silver_target_table,
         "parsed_img_dir": PARSED_IMG_DIR,  # Global, ensure it's set
-        "parser_type": job_config.parser_type,  # Pass parser type
+        "parser_name": job_config.parser_name,  # Pass parser type
         # Potentially pass other parser_kwargs if the async job initializes its own parser
     }
 
@@ -218,7 +214,7 @@ def foreach_batch_function_silver(batch_df, batch_id):
     # Process small files
     if not df_small.isEmpty():
         logger.info(f"Batch {batch_id}: Processing {df_small.count()} small files.")
-        if SALTED_PANDAS_UDF_MODE:
+        if job_config.parser_name == 'unstructured' and SALTED_PANDAS_UDF_MODE:
             # For salted mode, we group by a salt, collect lists of content and paths,
             # then explode the results after parsing.
             salt_factor = 40  # Make this configurable if needed
@@ -238,9 +234,67 @@ def foreach_batch_function_silver(batch_df, batch_id):
             )
         else:
             # For unsalted mode, process documents directly
-            processed_df = (
-                df_small.withColumn("text", process_document_bytes(parser)("content", F.col("path")))
-                .drop("content"))
+            if job_config.parser_name == 'unstructured':
+                processed_df = (
+                    df_small.withColumn("text", process_document_bytes(parser)("content", F.col("path")))
+                    .drop("content"))
+            elif job_config.parser_name == "databricks_ai_parse":
+                # The ai_parse api is currently a expr, so we just check whether the file type is correct
+                # We do not use the column ai_parse_expr since F.expr cannot dynamically interpret variable values
+                df_ai_parse_expr = (
+                    df_small.select(
+                        "path", 
+                        "modificationTime", 
+                        "length", 
+                        "page_count", 
+                        "file_type",
+                        "content"
+                    )
+                    .withColumn("ai_parse_expr", process_document_bytes(parser)("file_type"))
+                )
+                df_pages = (
+                    df_ai_parse_expr.select(
+                        "path", 
+                        "modificationTime", 
+                        "length", 
+                        "page_count", 
+                        "file_type",
+                        F.expr('ai_parse(content)').alias("parsed")
+                    )
+                    .withColumn(
+                       "parsed_json",
+                       F.parse_json(F.col("parsed").cast("string")))
+                    .select(
+                       "path",
+                        "modificationTime", 
+                        "length", 
+                        "page_count", 
+                        "file_type",
+                        F.expr("parsed_json:pages").alias("pages"))
+                )
+                df_pages_explode = (
+                    df_pages.select(
+                        "path", 
+                        "modificationTime", 
+                        "length", 
+                        "page_count", 
+                        "file_type",
+                        F.explode(F.col("pages").cast("array<string>")).alias("pages_items"))
+                        .withColumn(
+                            'markdown', 
+                            F.variant_get(F.parse_json('pages_items'), '$.representation.markdown', 'string'))
+                )
+                processed_df = (
+                    df_pages_explode.groupBy(
+                        "path", 
+                        "modificationTime", 
+                        "length", 
+                        "page_count", 
+                        "file_type")
+                        .agg(F.concat_ws('\n', F.collect_list('markdown')).alias('text'))
+                )
+            else:
+                raise ValueError(f"Unsupported parser name: {parser_name}")
 
         write_to_table(processed_df, job_config.parsed_files_table_name)
         logger.info(f"Batch {batch_id}: Successfully wrote {processed_df.count()} parsed documents.")
@@ -301,25 +355,13 @@ def run_silver_task(
     logger.info(f"Use Checkpoint Volume: {job_config.checkpoints_volume}")
     logger.info(f"Use Table Prefix: {job_config.table_prefix}")
     logger.info(f"Reset Data: {job_config.reset_data}")
-    logger.info(f"Parser Type: {job_config.parser_type}")  # Log parser type
+    logger.info(f"Parser Name: {job_config.parser_name}")  # Log parser name
     logger.info(f"Parser Strategy (if using unstructured OSS parser): {job_config.strategy}")
 
     logger.info("-------------------")
     logger.info("Job Configuration")
     logger.info("-------------------")
     logger.info(json.dumps(asdict(job_config), indent=4))
-
-    if job_config.reset_data:
-        checkpoint_remove_path = f"{job_config.checkpoint_path}/{job_config.parsed_files_table_name.split('.')[-1]}"
-        logger.info(f"Delete checkpoints volume folder {checkpoint_remove_path}...")
-        # Ensure workspace_utils is globally accessible or passed
-        if workspace_utils and workspace_utils.get_dbutil():
-            workspace_utils.get_dbutil().fs.rm(checkpoint_remove_path, recurse=True)
-        else:
-            logger.warning("DBUtils not available, cannot remove checkpoint path.")
-
-        logger.info(f"Delete table {job_config.parsed_files_table_name}...")
-        spark.sql(f"DROP TABLE IF EXISTS {job_config.parsed_files_table_name}")
 
     df_parsed_silver = spark.readStream.table(job_config.raw_files_table_name)
 
@@ -375,8 +417,8 @@ def main():
         checkpoints_volume=args.checkpoints_volume,
         table_prefix=args.table_prefix,
         reset_data=args.reset_data,
-        parser_type=args.parser_type,
         file_format=args.file_format,
+        parser_name = args.parser_name,
         strategy=args.strategy,
         target=args.target
     )
@@ -408,10 +450,10 @@ def main():
 
     try:
         parser = ParserFactory.get_parser(
-            parser_type=job_config.parser_type,
+            parser_name=job_config.parser_name,
             **parser_kwargs
         )
-        logger.info(f"Successfully initialized parser: {job_config.parser_type} with kwargs: {parser_kwargs}")
+        logger.info(f"Successfully initialized parser: {job_config.parser_name} with kwargs: {parser_kwargs}")
     except ValueError as e:
         logger.error(f"Failed to initialize parser: {e}")
         # Decide if to raise or exit. Raising is usually better for jobs.

@@ -21,6 +21,7 @@ resources:
               checkpoints_volume: ${var.checkpoints_volume}
               table_prefix: ${var.table_prefix}
               file_format: ${var.file_format}
+              parser: ${var.parser_name}
               strategy: ${var.strategy}
               target: ${bundle.target}
           libraries:
@@ -42,6 +43,7 @@ resources:
               checkpoints_volume: ${var.checkpoints_volume}
               table_prefix: ${var.table_prefix}
               file_format: ${var.file_format}
+              parser: ${var.parser_name}
               strategy: ${var.strategy}
               target: ${bundle.target}
           libraries:
@@ -53,7 +55,7 @@ resources:
         - job_cluster_key: pdf_ingestion_job_cluster
           new_cluster:
             node_type_id: ${var.node_type_id}
-            spark_version: 16.4.x-scala2.13
+            spark_version: 16.4.x-cpu-ml-scala2.13
             num_workers: ${var.num_workers}
             {{- if eq .cloud_provider "aws" }}
             aws_attributes:

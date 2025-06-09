@@ -62,9 +62,12 @@ variables:
   file_format:
     description: "input file format (extension)"
     default: pdf
+  parser_name:
+    description: "name of the parser: 'unstructured', 'databricks_ai_parse'"
+    default: unstructured
   strategy:
-    description: "Unstructured OSS setting: 'auto', 'hi_res', 'ocr_only'"
-    default: 'auto'
+    description: "Unstructured OSS setting: 'auto', 'hi_res'"
+    default: auto
 
 targets:
   # The deployment targets. See https://docs.databricks.com/en/dev-tools/bundles/deployment-modes.html

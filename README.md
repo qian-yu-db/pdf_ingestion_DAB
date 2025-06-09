@@ -7,13 +7,13 @@
 This project enable databricks users to ingest large number of unstructured files (e.g. PDF, Docx, PPTx, etc) from a Databricks Unity Catalog volume into a Databricks Delta table. The project is designed to be 
 high-performant, scalable and fault-tolerant.
 
-## Spark Optimizations
+## Key Features
 
-* multi-threaded OCR based pdf parsing
+* Concurrency within microbatch with threadpools
 * Automatic skewed tasks management
    * Users can set file size and page count threshold to bucket large data to seperate async jobs
    * Optional salted options to alleviate skewness in micro-batches
-* Fault tolerance
+* Error handling and retry logic
 
 ## Getting started
 
@@ -86,12 +86,47 @@ high-performant, scalable and fault-tolerant.
    for this project, and for CI/CD configuration, see
    https://docs.databricks.com/dev-tools/bundles/index.html.
 
+## Usage
+
+### Databricks Job Variables
+
+| Variable | Description                                                           | Default Value |
+|----------|-----------------------------------------------------------------------|--------------|
+| cloud_provider | cloud provider                                                        | aws          |
+| node_type_id | worker node type                                                      | m5d.2xlarge  |
+| async_node_type_id | async job worker node type                                            | m5d.4xlarge  |
+| num_workers | number of workers                                                     | 40           |
+| async_num_workers | number of workers for async job                                       | 1            |
+| max_concurrent_async_runs | max number of concurrent async job runs                               | 10           |
+| zone_id | AWS zone_id attribute                                                 | us-west-2a   |
+| catalog | unity catalog name                                                    | my_catalog   |
+| schema | schema name                                                           | my_schema    |
+| volume | source file volume                                                    | my_volume    |
+| checkpoints_volume | checkpoints volume name                                               | checkpoints  |
+| reset_data | reset all data tables boolean flag                                    | true         |
+| table_prefix | output table prefix                                                   | my_project   |
+| file_format | input file format (extension)                                         | pdf          |
+| parser_name | name of the parser, choices are `unstructured`, `databricks_ai_parse` | `unstructured` |
+| strategy | Unstructured parser strategy setting, choices are 'auto', 'hi_res'    | `auto`        |
+
+### Parsers
+
+|                      | Databricks AI Parse                 | Unstructured OSS Parser (`auto` strategy)                                | Unstructured OSS Parser (`hi_res` strategy) | 
+|----------------------|-------------------------------------|--------------------------------------------------------------------------|---------------------------------------------|
+| Supported File Types | `pdf`, `jpg`, `jpeg`, `png`         | `pdf`, `pptx`, `docx`, `xlsx`, `eml`, `msg`                              | `pdf`, `pptx`, `docx`, `xlsx`, `eml`, `msg` |
+| technology | agentic system with customer models | dynamtically choose between OCR and OCR + yolox based on document layout | OCR + yolox |
+
+### Known Limitations
+
+* The open source Unstructured API uses Yolox object detection model for `hi_res` strategy and `auto` strategy (dynamically determined). The Yolox model is hosted at huggingface hub. Depending on the time of the day and traffic condition, user may experience 429 error due to the rate limit from huggingface
+* AI parse is currently in Private Preview, please reach out to your Databricks Account Team to enable access
 
 ## Roadmap
 
-* Suppot databricks AI parse API
 * Memory management
-* Map-reduce by page splits option for large files
+* Map-reduce page splits option for large files
+* Declaritive Unstructured Document Processing
+  * [Delver Project](https://github.com/FMurray/delver)
 
 
 ## Reference:

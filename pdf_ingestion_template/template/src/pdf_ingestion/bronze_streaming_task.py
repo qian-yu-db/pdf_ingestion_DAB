@@ -4,7 +4,6 @@ from dataclasses import asdict
 
 import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
-import fitz  # PyMuPDF
 from pyspark.sql.types import IntegerType
 
 from .helper_utils import DatabricksWorkspaceUtils, JobConfig, parse_args
@@ -30,7 +29,6 @@ def run_bronze_task(
 
     # 2) Create volume if not exists (Databricks UC command)
     spark.sql(f"CREATE VOLUME IF NOT EXISTS {job_config.checkpoints_volume}")
-
     logger.info(f"Job Target: {job_config.target}")
     logger.info(f"Use Unity Catalog: {job_config.catalog}")
     logger.info(f"Use Schema: {job_config.schema}")
@@ -47,14 +45,55 @@ def run_bronze_task(
     # 4) If reset_data == True, remove existing table/checkpoints
     if job_config.reset_data:
         # We can remove a path using Spark APIs or dbutils:
-        checkpoint_remove_path = f"{job_config.checkpoint_path}/{job_config.raw_files_table_name.split('.')[-1]}"
+        checkpoint_remove_raw_path = f"{job_config.checkpoint_path}/{job_config.raw_files_table_name.split('.')[-1]}"
+        checkpoint_remove_parsed_path = f"{job_config.checkpoint_path}/{job_config.parsed_files_table_name.split('.')[-1]}"
 
-        logger.info(f"Delete checkpoints volume folder {checkpoint_remove_path} ...")
-        workspace_utils.get_dbutil().fs.rm(checkpoint_remove_path, True)
+        if workspace_utils and workspace_utils.get_dbutil():
+            logger.info(f"Delete checkpoints volume folder {checkpoint_remove_raw_path} ...")
+            workspace_utils.get_dbutil().fs.rm(checkpoint_remove_raw_path, recurse=True)
+            logger.info(f"Delete checkpoints volume folder {checkpoint_remove_parsed_path}...")
+            workspace_utils.get_dbutil().fs.rm(checkpoint_remove_parsed_path, recurse=True)
+        else:
+            logger.warning("DBUtils not available, cannot remove checkpoint path.")
 
-        logger.info(f"Drop table {job_config.raw_files_table_name}...")
+        logger.info(f"Delete table {job_config.raw_files_table_name}...")
         spark.sql(f"DROP TABLE IF EXISTS {job_config.raw_files_table_name}")
+        logger.info(f"Delete table {job_config.parsed_files_table_name}...")
+        spark.sql(f"DROP TABLE IF EXISTS {job_config.parsed_files_table_name}")
 
+    # Create empty tables
+    spark.sql(f"""CREATE TABLE {job_config.raw_files_table_name} (
+                    path STRING,
+                    modificationTime TIMESTAMP,
+                    length BIGINT,
+                    content BINARY,
+                    file_type STRING,
+                    page_count INT)
+                  USING delta
+                  TBLPROPERTIES (
+                    'delta.enableDeletionVectors' = 'true',
+                    'delta.feature.appendOnly' = 'supported',
+                    'delta.feature.deletionVectors' = 'supported',
+                    'delta.feature.invariants' = 'supported',
+                    'delta.minReaderVersion' = '3',
+                    'delta.minWriterVersion' = '7')
+    """)
+    spark.sql(f"""CREATE TABLE {job_config.parsed_files_table_name} (
+                  path STRING,
+                  modificationTime TIMESTAMP,
+                  length BIGINT,
+                  page_count INT,
+                  markdown_content STRING,
+                  file_type STRING)
+                  USING delta
+                  TBLPROPERTIES (
+                    'delta.enableDeletionVectors' = 'true',
+                    'delta.feature.appendOnly' = 'supported',
+                    'delta.feature.deletionVectors' = 'supported',
+                    'delta.feature.invariants' = 'supported',
+                    'delta.minReaderVersion' = '3',
+                    'delta.minWriterVersion' = '7')
+    """)
     # 5) Create a streaming DataFrame with Autoloader
     df_raw_bronze = (
         spark.readStream.format("cloudFiles")
@@ -69,18 +108,11 @@ def run_bronze_task(
     # First extract file type, then get page count with both arguments
     df_raw_bronze_with_pages = df_raw_bronze.withColumn(
         "file_type", F.element_at(F.split("path", "\\."), -1)
-    ).withColumn(
-        "page_count", 
-        get_page_count_udf(
-            F.col("content"), 
-            F.col("file_type")
-        )
-    )
+    ).withColumn("page_count", get_page_count_udf(F.col("content"), F.col("file_type")))
 
     # 6) Write stream to the Bronze table
     (
-        df_raw_bronze_with_pages
-        .writeStream.trigger(availableNow=True)
+        df_raw_bronze_with_pages.writeStream.trigger(availableNow=True)
         .option(
             "checkpointLocation",
             f"{job_config.checkpoint_path}/{job_config.raw_files_table_name.split('.')[-1]}",
@@ -114,6 +146,7 @@ def main():
         table_prefix=args.table_prefix,
         reset_data=args.reset_data,
         file_format=args.file_format,
+        parser_name=args.parser_name,
         strategy=args.strategy,
         target=args.target,
     )

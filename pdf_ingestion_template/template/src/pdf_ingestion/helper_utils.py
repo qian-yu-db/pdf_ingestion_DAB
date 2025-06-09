@@ -1,13 +1,15 @@
 import argparse
+import logging
+import os
 import sys
 import time
 from dataclasses import dataclass
 from functools import wraps
-import logging
 
 from databricks.sdk import WorkspaceClient
 from pyspark.sql import SparkSession
 from pyspark.sql.dataframe import DataFrame
+from .parsers.base import FileType
 
 logging.basicConfig()
 logger = logging.getLogger("helper_utils")
@@ -25,7 +27,7 @@ class JobConfig:
     file_format: str = "pdf"
     strategy: str = "auto"
     target: str = "dev"
-    parser_type: str = "unstructured"
+    parser_name: str = "unstructured"
 
     @property
     def source_path(self):
@@ -37,9 +39,7 @@ class JobConfig:
 
     @property
     def raw_files_table_name(self):
-        return (
-            f"{self.catalog}.{self.schema}.{self.table_prefix}_raw_files"
-        )
+        return f"{self.catalog}.{self.schema}.{self.table_prefix}_raw_files"
 
     @property
     def parsed_files_table_name(self):
@@ -95,11 +95,11 @@ def parse_args():
         help="Target environment for the job (default: dev)",
     )
     parser.add_argument(
-        "--parser_type",
+        "--parser_name",
         type=str,
         default="unstructured",
-        choices=["unstructured"],
-        help="Type of parser to use for document processing (default: unstructured)",
+        choices=["unstructured", "databricks_ai_parse"],
+        help="Name of parser to use for document processing (default: unstructured)",
     )
 
     args = parser.parse_args(sys.argv[1:])
@@ -110,11 +110,12 @@ def parse_args():
     return args
 
 
-def retry_on_failure(max_retries=3, delay=1):
+def retry_on_failure(max_retries=3, delay=1, backoff=2):
     """Decorator to retry a function upon failure.
 
     :param max_retries: Maximum number of retry attempts
     :param delay: Delay between retries in seconds
+    :param backoff: Factor by which to increase delay between retries
     :return: Decorated function
     """
 
@@ -122,17 +123,19 @@ def retry_on_failure(max_retries=3, delay=1):
         @wraps(func)
         def wrapper(*args, **kwargs):
             attempts = 0
+            current_delay = delay
             while attempts < max_retries:
                 try:
                     return func(*args, **kwargs)
                 except Exception as e:
                     attempts += 1
-                    logger.info(f"Attempt {attempts} failed: {e}")
+                    logger.warning(f"Attempt {attempts} failed: {e}")
                     if attempts < max_retries:
-                        logger.info(f"Retrying in {delay} seconds...")
-                        time.sleep(delay)
+                        logger.info(f"Retrying in {current_delay} seconds...")
+                        time.sleep(current_delay)
+                        current_delay *= backoff
                     else:
-                        logger.info("All retry attempts failed.")
+                        logger.error("All retry attempts failed.")
                         raise
 
         return wrapper
@@ -147,6 +150,8 @@ def write_to_table(df: DataFrame, table_name: str):
         df: DataFrame to write
         table_name: Name of the table to write to
     """
+    # rename column text to markdown_content
+    df = df.withColumnRenamed("text", "markdown_content")
     df.write.mode("append").saveAsTable(table_name)
 
 
@@ -215,3 +220,60 @@ class DatabricksWorkspaceUtils:
         logger.info("Running in local mode, dbutils not available.")
 
         return None
+
+
+def get_file_type_from_path(file_path: str) -> FileType:
+    """Determine the file type from the file extension.
+
+    :param file_path: Path to the file to determine type for
+    :type file_path: str
+    :return: The determined file type
+    :rtype: FileType
+    :raises ValueError: If the file extension is not supported
+    """
+    ext = os.path.splitext(file_path)[1].lower().lstrip(".")
+    try:
+        # Handle image files
+        if ext in ["jpg", "jpeg", "png", "gif", "bmp", "tiff", "webp"]:
+            return FileType.IMG
+        # Handle email files
+        if ext in ["eml", "msg"]:
+            return FileType.EMAIL
+        # Handle other supported formats
+        return FileType(ext)
+    except ValueError:
+        supported_formats = ", ".join(f".{ft.value}" for ft in FileType)
+        logger.warning(
+            f"Unsupported file extension: '{ext}' for file {file_path}. Supported: {supported_formats}"
+        )
+        raise ValueError(
+            f"Unsupported file extension: '{ext}'. Supported: {supported_formats}"
+        )
+
+
+def get_file_type_from_ext(file_ext: str) -> FileType:
+    """Determine the file type from the file extension.
+
+    :param file_ext: file extension in string
+    :type file_ext: str
+    :return: The determined file type
+    :rtype: FileType
+    :raises ValueError: If the file extension is not supported
+    """
+    try:
+        # Handle image files
+        if file_ext in ["jpg", "jpeg", "png", "gif", "bmp", "tiff", "webp"]:
+            return FileType.IMG
+        # Handle email files
+        if file_ext in ["eml", "msg"]:
+            return FileType.EMAIL
+        # Handle other supported formats
+        return FileType(file_ext)
+    except ValueError:
+        supported_formats = ", ".join(f".{ft.value}" for ft in FileType)
+        logger.warning(
+            f"Unsupported file extension: '{file_ext}'. Supported: {supported_formats}"
+        )
+        raise ValueError(
+            f"Unsupported file extension: '{file_ext}'. Supported: {supported_formats}"
+        )
